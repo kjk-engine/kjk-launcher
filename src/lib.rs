@@ -3,6 +3,7 @@
 //! the player asks. Saves and settings stay in kjk's own folder; the
 //! launcher backs them up before a version starts for the first time.
 
+pub mod args;
 pub mod backup;
 pub mod cli;
 pub mod config;
