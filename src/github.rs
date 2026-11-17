@@ -76,6 +76,14 @@ pub fn date(published_at: Option<&str>) -> &str {
     published_at.and_then(|p| p.get(..10)).unwrap_or("")
 }
 
+/// "14 November 2026" for a publish date such as "2026-11-14T10:00:00Z";
+/// "" when there is none.
+pub fn long_date(published_at: Option<&str>) -> String {
+    chrono::NaiveDate::parse_from_str(date(published_at), "%Y-%m-%d")
+        .map(|day| day.format("%-d %B %Y").to_string())
+        .unwrap_or_default()
+}
+
 pub fn semver(tag: &str) -> Option<Version> {
     Version::parse(tag.strip_prefix('v').unwrap_or(tag)).ok()
 }
@@ -274,6 +282,17 @@ pub fn offer<'a>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn long_dates() {
+        for (published, shown) in [
+            (Some("2026-11-14T10:00:00Z"), "14 November 2026"),
+            (Some("2026-01-02"), "2 January 2026"),
+            (None, ""),
+        ] {
+            assert_eq!(super::long_date(published), shown);
+        }
+    }
+
     use super::*;
 
     fn release(tag: &str, published: &str, prerelease: bool) -> Release {
