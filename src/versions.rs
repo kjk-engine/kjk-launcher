@@ -25,12 +25,21 @@ pub struct Menu {
     pub prereleases: Vec<Row>,
 }
 
-/// Both groups newest first. Installed versions that GitHub no longer lists
-/// (or that were unzipped by hand) still appear, in the group their tag fits.
-pub fn menu(list: &[Release], installed: &[Installed], current: Option<&str>) -> Menu {
+/// Both groups newest first. Pre-releases that are not installed are listed
+/// only when `prereleases` is on. Installed versions are always listed,
+/// also when GitHub no longer lists them (or they were unzipped by hand),
+/// in the group their tag fits.
+pub fn menu(
+    list: &[Release],
+    installed: &[Installed],
+    current: Option<&str>,
+    prereleases: bool,
+) -> Menu {
+    let is_installed = |tag: &str| installed.iter().any(|v| v.tag == tag);
     // (tag, publish date, pre-release)
     let mut all: Vec<(String, Option<String>, bool)> = github::installable(list, true)
         .into_iter()
+        .filter(|r| prereleases || !r.prerelease || is_installed(&r.tag_name))
         .map(|r| (r.tag_name.clone(), r.published_at.clone(), r.prerelease))
         .collect();
     for version in installed {
@@ -48,7 +57,7 @@ pub fn menu(list: &[Release], installed: &[Installed], current: Option<&str>) ->
         tag: tag.to_string(),
         state: if current == Some(tag) {
             State::Selected
-        } else if installed.iter().any(|v| v.tag == tag) {
+        } else if is_installed(tag) {
             State::Installed
         } else {
             State::NotInstalled
@@ -77,10 +86,25 @@ fn is_release_tag(tag: &str) -> bool {
 
 /// "kjk 0.19.0" for "v0.19.0"; other tags as they are after "kjk ".
 pub fn title(tag: &str) -> String {
-    let bare = tag
-        .strip_prefix('v')
-        .filter(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
-    format!("kjk {}", bare.unwrap_or(tag))
+    format!("kjk {}", number(tag))
+}
+
+/// "0.19.0" for "v0.19.0": a tag without the leading v when a number
+/// follows it; other tags as they are.
+pub fn number(tag: &str) -> &str {
+    tag.strip_prefix('v')
+        .filter(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+        .unwrap_or(tag)
+}
+
+/// A tag as the Versions page shows it: "0.19.0" for a plain version tag
+/// such as "v0.19.0", other tags as they are.
+pub fn shown_tag(tag: &str) -> &str {
+    if is_release_tag(tag) {
+        number(tag)
+    } else {
+        tag
+    }
 }
 
 #[cfg(test)]
@@ -135,7 +159,7 @@ mod tests {
 
     #[test]
     fn groups_releases_and_prereleases_newest_first() {
-        let m = menu(&list(), &on_disk(), Some("v0.19.0"));
+        let m = menu(&list(), &on_disk(), Some("v0.19.0"), true);
         let tags: Vec<_> = m.releases.iter().map(|r| r.tag.as_str()).collect();
         assert_eq!(tags, ["v0.19.1", "v0.19.0", "v0.18.5"]);
         assert!(m.releases[0].newest && matches!(m.releases[0].state, State::NotInstalled));
@@ -146,8 +170,27 @@ mod tests {
 
     #[test]
     fn offline_menu_still_lists_installed_versions() {
-        let m = menu(&[], &on_disk(), Some("v0.19.0"));
+        let m = menu(&[], &on_disk(), Some("v0.19.0"), false);
         assert_eq!(m.releases.len(), 2);
+    }
+
+    #[test]
+    fn prereleases_off_keeps_only_installed_prereleases() {
+        let m = menu(&list(), &on_disk(), Some("v0.19.0"), false);
+        let tags: Vec<_> = m.prereleases.iter().map(|r| r.tag.as_str()).collect();
+        assert_eq!(tags, ["pre-feat-x-v0.19.0-3-gabc"]);
+        assert_eq!(m.releases.len(), 3);
+    }
+
+    #[test]
+    fn shown_tags() {
+        for (tag, shown) in [
+            ("v0.19.0", "0.19.0"),
+            ("v0.20.0-rc.1", "v0.20.0-rc.1"),
+            ("pre-feat-x-v0.19.0-3-gabc", "pre-feat-x-v0.19.0-3-gabc"),
+        ] {
+            assert_eq!(shown_tag(tag), shown);
+        }
     }
 
     #[test]
