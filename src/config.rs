@@ -63,6 +63,18 @@ impl Config {
         let json = serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?;
         write_atomic(&paths.config_file, &json)
     }
+
+    /// The settings to use after the launcher switched to another kjk
+    /// folder whose files are at `paths`. That folder's own `launcher.json`
+    /// is kept and loaded when it has one: `(its settings, false)`.
+    /// Otherwise `(self, true)`: these settings, to be saved there.
+    pub fn for_folder(&self, paths: &Paths) -> (Config, bool) {
+        if paths.config_file.is_file() {
+            (Config::load(paths), false)
+        } else {
+            (self.clone(), true)
+        }
+    }
 }
 
 /// The launcher's folders and its settings, ready to use. A failed move
@@ -332,6 +344,29 @@ mod tests {
         assert_eq!(resolve(None), Some(moved.clone()));
         assert_eq!(resolve(Some(&home)), Some(home.clone()));
         assert_eq!(resolve_kjk_folder(None, None), None);
+    }
+
+    #[test]
+    fn another_kjk_folder_keeps_its_own_settings() {
+        let dir = scratch("for-folder");
+        let paths = Paths::in_kjk_folder(dir.join("other"));
+        let mine = Config {
+            current: Some("v0.19.0".into()),
+            ..Config::default()
+        };
+        // A folder without a launcher.json takes these settings.
+        let (config, save) = mine.for_folder(&paths);
+        assert_eq!(config.current.as_deref(), Some("v0.19.0"));
+        assert!(save);
+        // A folder with one keeps it, untouched.
+        let theirs = r#"{"current":"v0.18.5","pinned":true}"#;
+        fs::create_dir_all(&paths.root).unwrap();
+        fs::write(&paths.config_file, theirs).unwrap();
+        let (config, save) = mine.for_folder(&paths);
+        assert_eq!(config.current.as_deref(), Some("v0.18.5"));
+        assert!(config.pinned);
+        assert!(!save);
+        assert_eq!(fs::read_to_string(&paths.config_file).unwrap(), theirs);
     }
 
     #[test]

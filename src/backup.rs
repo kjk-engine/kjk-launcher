@@ -144,8 +144,8 @@ pub fn prune(paths: &Paths, keep: usize) {
 /// Puts a backup's saves and settings back. The present ones are backed
 /// up first (returned), so a restore can itself be undone.
 pub fn restore(paths: &Paths, backup: &Path) -> Result<Option<PathBuf>, String> {
-    if crate::launch::kjk_running() {
-        return Err("close kjk (and the save editor) before restoring".into());
+    if crate::launch::kjk_running(&paths.versions) {
+        return Err("Close kjk and the save editor before you restore.".into());
     }
     let saves = paths
         .saves()

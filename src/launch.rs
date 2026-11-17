@@ -58,7 +58,8 @@ pub fn play_now(paths: &Paths, config: &mut Config, offered: bool) -> PlayNow {
     };
     let Some(version) = install::find(paths, &tag) else {
         return PlayNow::NeedsWindow(format!(
-            "The folder of kjk {tag} is gone. Choose another version, then press Play."
+            "The folder of {} is gone. Choose another version, then press Play.",
+            crate::versions::title(&tag)
         ));
     };
     if offered {
@@ -109,7 +110,8 @@ fn current(paths: &Paths, config: &Config) -> Result<Installed, String> {
         .current
         .as_deref()
         .ok_or("no version of kjk is installed yet")?;
-    install::find(paths, tag).ok_or_else(|| format!("{tag} is not installed any more"))
+    install::find(paths, tag)
+        .ok_or_else(|| format!("{} is not installed any more.", crate::versions::title(tag)))
 }
 
 /// Starts kjk or its save editor, with the variables of
@@ -139,18 +141,44 @@ fn start(dir: &Path, program: &Path, args: &[String]) -> Result<Child, String> {
         .map_err(|e| format!("could not start {}: {e}", program.display()))
 }
 
-/// Whether kjk or its save editor is running (from any folder).
-pub fn kjk_running() -> bool {
-    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
+/// Whether a version of kjk installed in `install_dir`, or its save editor,
+/// is running. Programs named kjk that run from other folders do not count.
+pub fn kjk_running(install_dir: &Path) -> bool {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
     let Ok(mut system) = System::new() else {
         return false;
     };
-    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
-    system.processes().values().any(|process| {
-        let name = process.name().to_string_lossy().to_ascii_lowercase();
-        let name = name.strip_suffix(".exe").unwrap_or(&name);
-        name == "kjk" || name == "kjk-save-editor"
-    })
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet),
+    );
+    let install_dir = install_dir
+        .canonicalize()
+        .unwrap_or_else(|_| install_dir.to_path_buf());
+    system
+        .processes()
+        .values()
+        .filter_map(|process| process.exe())
+        .any(|exe| is_installed_kjk(exe, &install_dir))
+}
+
+/// Whether the program at `exe` is kjk or its save editor from a version
+/// in `install_dir`. On macOS the program is inside `kjk.app` or
+/// `kjk Save Editor.app`.
+pub fn is_installed_kjk(exe: &Path, install_dir: &Path) -> bool {
+    if !exe.starts_with(install_dir) {
+        return false;
+    }
+    let stem = exe
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_ascii_lowercase());
+    let named = matches!(stem.as_deref(), Some("kjk" | "kjk-save-editor"));
+    let bundled = exe.ancestors().any(|folder| {
+        let name = folder.file_name().map(|name| name.to_string_lossy());
+        matches!(name.as_deref(), Some("kjk.app" | "kjk Save Editor.app"))
+    });
+    named || bundled
 }
 
 /// Opens a folder in the system's file manager.
@@ -177,6 +205,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("kjk-engine")).unwrap();
         Paths::at(root)
+    }
+
+    #[test]
+    fn only_kjk_from_the_install_folder_counts() {
+        let install = Path::new("/home/p/kjk/versions");
+        let cases = [
+            ("/home/p/kjk/versions/0.19.0/kjk", true),
+            ("/home/p/kjk/versions/0.19.0/kjk-save-editor", true),
+            ("/home/p/kjk/versions/0.18.5/kjk.exe", true),
+            (
+                "/home/p/kjk/versions/0.19.0/kjk.app/Contents/MacOS/kjk",
+                true,
+            ),
+            (
+                "/home/p/kjk/versions/0.19.0/kjk Save Editor.app/Contents/MacOS/save_editor",
+                true,
+            ),
+            ("/home/p/code/kjk/target/debug/kjk", false),
+            ("/usr/local/bin/kjk", false),
+            ("/home/p/kjk/versions/0.19.0/ffmpeg", false),
+            ("/home/p/kjk/versions-old/0.19.0/kjk", false),
+        ];
+        for (exe, expected) in cases {
+            assert_eq!(is_installed_kjk(Path::new(exe), install), expected, "{exe}");
+        }
     }
 
     #[test]
