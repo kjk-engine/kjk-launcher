@@ -5,7 +5,7 @@ The kjk launcher is an optional program that installs and starts
 of kjk each time it opens. It never installs or updates anything until you
 click a button.
 
-Made by a community contributor. The kjk project maintains it from version
+Made by [dansan96](https://github.com/dansan96). The kjk project maintains it from version
 0.2.0 on. It is released under the MIT licence (see `LICENSE`).
 
 Version 0.1.0 cannot update itself. Replace it with 0.2.0 by hand once.
@@ -57,8 +57,6 @@ launcher starts kjk at once and opens no window. It waits until kjk exits, so
 Steam counts the whole session. The launcher opens its window instead when
 no version is installed, when a new version is offered, or when a game
 folder is missing.
-
-This has only been checked on Windows.
 
 ## Steam Deck
 
