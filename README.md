@@ -5,8 +5,9 @@ The kjk launcher is an optional program that installs and starts
 of kjk each time it opens. It never installs or updates anything until you
 click a button.
 
-Made by [dansan96](https://github.com/dansan96). The kjk project maintains it from version
-0.2.0 on. It is released under the MIT licence (see `LICENSE`).
+[dansan96](https://github.com/dansan96) started the launcher and wrote version
+0.1.0. The kjk project rebuilt it as version 0.2.0 and maintains it from there.
+It is released under the MIT licence (see `LICENSE`).
 
 Version 0.1.0 cannot update itself. Replace it with 0.2.0 by hand once.
 
