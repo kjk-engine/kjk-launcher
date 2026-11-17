@@ -112,19 +112,25 @@ fn current(paths: &Paths, config: &Config) -> Result<Installed, String> {
     install::find(paths, tag).ok_or_else(|| format!("{tag} is not installed any more"))
 }
 
+/// Starts kjk or its save editor, with the variables of
+/// `config::kjk_env` while kjk's folder is moved.
 fn start(dir: &Path, program: &Path, args: &[String]) -> Result<Child, String> {
+    let env = crate::config::kjk_env();
     let mut command = if cfg!(target_os = "macos") {
         // -W waits until the app quits, so the child lives as long as kjk.
+        // An app started by `open` gets its variables only through --env.
         let mut open = Command::new("open");
-        open.arg("-W")
-            .arg("-n")
-            .arg(program)
-            .arg("--args")
-            .args(args);
+        open.arg("-W").arg("-n");
+        for (name, value) in &env {
+            open.arg("--env").arg(format!("{name}={}", value.display()));
+        }
+        open.arg(program).arg("--args").args(args);
         open
     } else {
         let mut direct = Command::new(program);
-        direct.args(args);
+        direct
+            .args(args)
+            .envs(env.iter().map(|(name, value)| (name, value)));
         direct
     };
     command

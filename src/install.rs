@@ -185,7 +185,7 @@ pub struct Progress {
 }
 
 impl Progress {
-    fn stage(&self, text: impl Into<String>) {
+    pub fn stage(&self, text: impl Into<String>) {
         *self.stage.lock().unwrap() = text.into();
     }
 

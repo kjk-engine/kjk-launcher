@@ -4,6 +4,8 @@
 //! `KJK_LAUNCHER_TAB=play|versions|settings` picks the tab the
 //! window opens on. `KJK_LAUNCHER_MENU=1` opens the version menu, and
 //! `KJK_LAUNCHER_MENU=ffmpeg` opens the "Install ffmpeg" dialog.
+//! `KJK_LAUNCHER_MENU=move:<folder>` opens the dialog that asks to move
+//! kjk's folder there (nothing moves unless that dialog is answered).
 //! `KJK_LAUNCHER_SCROLL=<points>` scrolls the Versions and Settings pages
 //! down that far.
 
@@ -76,4 +78,10 @@ pub fn ffmpeg_open() -> bool {
 /// How far `KJK_LAUNCHER_SCROLL` scrolls the page down, in points.
 pub fn scroll() -> Option<f32> {
     std::env::var("KJK_LAUNCHER_SCROLL").ok()?.parse().ok()
+}
+
+/// The folder `KJK_LAUNCHER_MENU=move:<folder>` names.
+pub fn move_to() -> Option<PathBuf> {
+    let menu = std::env::var("KJK_LAUNCHER_MENU").ok()?;
+    menu.strip_prefix("move:").map(PathBuf::from)
 }
