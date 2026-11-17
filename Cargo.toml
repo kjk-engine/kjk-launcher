@@ -1,0 +1,37 @@
+[package]
+name = "kjk-launcher"
+version = "0.1.0"
+edition = "2021"
+description = "Launcher for kjk that checks GitHub for new releases and installs them only when asked"
+license = "MIT"
+default-run = "kjk-launcher"
+
+[[bin]]
+name = "kjk-launcher"
+path = "src/main.rs"
+
+[[bin]]
+name = "kjk-launcher-cli"
+path = "src/bin/kjk-launcher-cli.rs"
+
+[dependencies]
+chrono = "0.4.45"
+dirs = "7.0.0"
+eframe = "0.37.0"
+flate2 = "1.1.11"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
+rfd = "0.18.0"
+semver = "1.0.28"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+sysinfo = "0.40.4"
+tar = "0.4.46"
+ureq = "3.5.2"
+zip = "9.6.1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+codegen-units = 4
