@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// The most installed versions the player can choose to keep.
+const KEEP_VERSIONS_MOST: usize = 20;
+
 impl Ready {
     pub(super) fn settings_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         widgets::page_title(ui, "Settings");
@@ -13,32 +16,27 @@ impl Ready {
                 &mut self.config.check_on_start,
                 "Check for updates when the launcher opens",
             ),
-            (
-                &mut self.config.prereleases,
-                "Offer pre-releases as updates",
-            ),
-            (
-                &mut self.config.pinned,
-                "Stay on the selected version and offer no updates",
-            ),
+            (&mut self.config.prereleases, "Show pre-releases"),
+            (&mut self.config.pinned, "Never show update notices"),
         ];
         for (value, label) in checks {
             changed |= ui.checkbox(value, label).changed();
         }
         if let Some(skipped) = self.config.skipped.clone() {
-            ui.horizontal(|ui| {
+            widgets::line(ui, |ui| {
                 widgets::muted(
                     ui,
-                    format!("You skipped {skipped}. The launcher does not offer it."),
+                    format!("You skipped version {}.", release_menu::number(&skipped)),
                 );
-                if widgets::secondary_button(ui, "Offer it again").clicked() {
+                if widgets::compact_button(ui, "Undo").clicked() {
                     self.config.skipped = None;
                     changed = true;
                 }
             });
         }
+        ui.add_space(theme::SPACE_1);
         let check = ui.add_enabled_ui(self.checking.is_none(), |ui| {
-            widgets::secondary_button(ui, "Check for updates now")
+            widgets::compact_button(ui, "Check for updates now")
         });
         if check.inner.clicked() {
             self.not_now = false;
@@ -46,27 +44,24 @@ impl Ready {
         }
         ui.add_space(theme::SPACE_6);
 
-        widgets::section_label(ui, "Versions and backups");
+        widgets::section_label(ui, "Storage");
         changed |= ui
             .checkbox(
                 &mut self.config.backup_before_new_version,
                 "Back up the saves before a version starts for the first time",
             )
             .changed();
-        ui.horizontal(|ui| {
-            changed |= ui
-                .add(egui::DragValue::new(&mut self.config.keep_versions).range(0..=50))
-                .changed();
-            widgets::muted(
-                ui,
-                "Installed versions to keep after an update. 0 keeps all of them.",
-            );
-        });
-        ui.horizontal(|ui| {
-            changed |= ui
-                .add(egui::DragValue::new(&mut self.config.keep_backups).range(1..=500))
-                .changed();
-            widgets::muted(ui, "Backups to keep.");
+        widgets::line(ui, |ui| {
+            // An old launcher.json can hold 0, which keeps every version.
+            let mut keep = match self.config.keep_versions {
+                0 => KEEP_VERSIONS_MOST,
+                n => n.min(KEEP_VERSIONS_MOST),
+            };
+            if widgets::number_field(ui, &mut keep, 1..=KEEP_VERSIONS_MOST).changed() {
+                self.config.keep_versions = keep;
+                changed = true;
+            }
+            widgets::muted(ui, "Installed versions to keep");
         });
         if changed {
             self.not_now = false;
@@ -112,9 +107,9 @@ impl Ready {
         );
         let launcher = std::env::current_exe().unwrap_or_default();
         let line = crate::args::steam_line(&launcher);
-        ui.horizontal(|ui| {
+        widgets::line(ui, |ui| {
             ui.label(widgets::text(&line, Text::Mono, theme::INK));
-            if widgets::secondary_button(ui, "Copy").clicked() {
+            if widgets::compact_button(ui, "Copy").clicked() {
                 ui.ctx().copy_text(line.clone());
             }
         });

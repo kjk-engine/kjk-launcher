@@ -49,7 +49,7 @@ impl Ready {
                     widgets::muted(ui, format!("It takes {:.1} MB.", b.size as f64 / 1e6));
                 },
                 |ui| {
-                    if widgets::secondary_button(ui, "Restore").clicked() {
+                    if widgets::compact_button(ui, "Restore").clicked() {
                         self.confirm = Some(Confirm::Restore(b.path.clone()));
                     }
                 },
