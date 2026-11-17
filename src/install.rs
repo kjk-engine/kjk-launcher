@@ -149,6 +149,21 @@ pub fn game_exe(dir: &Path) -> PathBuf {
     }
 }
 
+/// The program in a version's folder that can be run with arguments:
+/// `kjk.exe`, the program inside `kjk.app` on macOS, or `kjk`.
+pub fn game_binary(dir: &Path) -> PathBuf {
+    if cfg!(windows) {
+        dir.join("kjk.exe")
+    } else if cfg!(target_os = "macos") {
+        dir.join("kjk.app")
+            .join("Contents")
+            .join("MacOS")
+            .join("kjk")
+    } else {
+        dir.join("kjk")
+    }
+}
+
 /// The save editor packed beside the game, when there is one.
 pub fn editor_exe(dir: &Path) -> Option<PathBuf> {
     let path = if cfg!(windows) {
