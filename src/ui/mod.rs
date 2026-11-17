@@ -516,6 +516,7 @@ impl Ready {
         });
 
         self.confirm_window(ctx);
+        frame::edges(ctx);
         let busy = self.job.is_some() || self.checking.is_some() || self.asking.is_some();
         self.shot.frame(ctx, busy);
     }
@@ -557,6 +558,9 @@ impl Ready {
                     self.tab = tab;
                 }
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                frame::window_buttons(ui);
+            });
         });
     }
 
