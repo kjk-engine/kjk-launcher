@@ -209,17 +209,82 @@ pub fn add(ui: &mut egui::Ui, widget: impl egui::Widget) -> egui::Response {
     response
 }
 
-/// The focus outline of `add`, for a control drawn by hand.
+/// The focus outline of `add`, for a control drawn by hand. A control that
+/// gets the focus from the keyboard is scrolled into view. The outline may
+/// reach past the edge of a scrolling list, so it is drawn a little outside
+/// the list's own clip.
 pub fn focus_outline(ui: &egui::Ui, response: &egui::Response) {
+    if response.gained_focus() {
+        response.scroll_to_me(None);
+    }
     if response.has_focus() {
         let gap = theme::FOCUS_GAP + theme::FOCUS_WIDTH / 2.0;
-        ui.painter().rect_stroke(
+        let clip = ui.clip_rect().expand(gap + theme::FOCUS_WIDTH);
+        ui.painter().with_clip_rect(clip).rect_stroke(
             response.rect.expand(gap),
             CornerRadius::same(theme::RADIUS_MD + gap as u8),
             Stroke::new(theme::FOCUS_WIDTH, theme::INK),
             egui::StrokeKind::Middle,
         );
     }
+}
+
+/// A check box with the focus outline.
+pub fn checkbox(ui: &mut egui::Ui, value: &mut bool, label: &str) -> egui::Response {
+    add(ui, egui::Checkbox::new(value, label))
+}
+
+/// A web link in the mono style, with the focus outline.
+pub fn link(ui: &mut egui::Ui, url: &str) -> egui::Response {
+    let words = text(url, Text::Mono, theme::INK);
+    add(ui, egui::Hyperlink::from_label_and_url(words, url))
+}
+
+/// Mono text, such as a path or a command line, that wraps only after a
+/// path separator or a space, so no name is cut in two. A name longer
+/// than the whole line is cut where it must be.
+pub fn wrapped_mono(ui: &mut egui::Ui, words: &str, color: egui::Color32) {
+    let room = ui.available_width();
+    let lines = wrap_at_separators(words, |line| width(ui, line, Text::Mono) <= room);
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for line in lines {
+            ui.add(egui::Label::new(text(line, Text::Mono, color)).wrap());
+        }
+    });
+}
+
+/// Splits `words` into lines that each `fit`, breaking only after a `/`, a
+/// `\` or a space. A piece that does not fit by itself gets a line of its
+/// own.
+pub fn wrap_at_separators(words: &str, fits: impl Fn(&str) -> bool) -> Vec<String> {
+    let mut pieces = Vec::new();
+    let mut start = 0;
+    for (at, c) in words.char_indices() {
+        if matches!(c, '/' | '\\' | ' ') {
+            let end = at + c.len_utf8();
+            pieces.push(&words[start..end]);
+            start = end;
+        }
+    }
+    if start < words.len() {
+        pieces.push(&words[start..]);
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for piece in pieces {
+        let longer = format!("{line}{piece}");
+        if line.is_empty() || fits(longer.trim_end()) {
+            line = longer;
+        } else {
+            lines.push(line.trim_end().to_string());
+            line = piece.to_string();
+        }
+    }
+    if !line.is_empty() {
+        lines.push(line.trim_end().to_string());
+    }
+    lines
 }
 
 /// An 8px dot in the status color, then the word in the label style. In a
@@ -245,6 +310,25 @@ pub fn status(ui: &mut egui::Ui, status: Status, word: &str) {
             words(ui);
         }
     });
+}
+
+/// A notice: the dot in the status color, then the words in the label
+/// style, wrapped over as many lines as they need, and "Dismiss" at the
+/// right end. Returns true when Dismiss is pressed.
+pub fn notice(ui: &mut egui::Ui, status: Status, words: &str) -> bool {
+    let mut dismissed = false;
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+        dismissed = text_button(ui, "Dismiss").clicked();
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+            ui.spacing_mut().item_spacing.x = theme::SPACE_2;
+            let size = egui::vec2(theme::DOT, x_middle(ui, Text::Label) * 2.0);
+            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+            ui.painter()
+                .circle_filled(rect.center(), theme::DOT / 2.0, status.color());
+            ui.add(egui::Label::new(text(words, Text::Label, theme::INK)).wrap());
+        });
+    });
+    dismissed
 }
 
 /// A 1px `LINE` across the width.
@@ -323,15 +407,7 @@ pub fn version_title(ui: &mut egui::Ui, title: &str) -> egui::Response {
         ],
         stroke,
     );
-    if response.has_focus() {
-        let gap = theme::FOCUS_GAP + theme::FOCUS_WIDTH / 2.0;
-        painter.rect_stroke(
-            rect.expand(gap),
-            CornerRadius::same(theme::RADIUS_MD),
-            stroke,
-            egui::StrokeKind::Middle,
-        );
-    }
+    focus_outline(ui, &response);
     response
 }
 
@@ -360,6 +436,7 @@ pub fn menu_row(ui: &mut egui::Ui, left: &str, style: Text, state: &str) -> egui
         theme::font(Text::Label),
         theme::INK_MUTED,
     );
+    focus_outline(ui, &response);
     response
 }
 
@@ -388,4 +465,41 @@ pub fn row(ui: &mut egui::Ui, left: impl FnOnce(&mut egui::Ui), right: impl FnOn
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right);
     });
     ui.add_space(theme::SPACE_3);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_at_separators;
+
+    #[test]
+    fn paths_wrap_only_at_separators_and_spaces() {
+        let fits = |n: usize| move |line: &str| line.chars().count() <= n;
+        let cases: [(&str, usize, &[&str]); 5] = [
+            ("/Users/me/kjk", 40, &["/Users/me/kjk"]),
+            (
+                "/Users/me/Library/Application Support/kjk",
+                20,
+                &["/Users/me/Library/", "Application Support/", "kjk"],
+            ),
+            (
+                r"C:\Games\kjk launcher\kjk-launcher.exe",
+                16,
+                &[r"C:\Games\kjk", r"launcher\", "kjk-launcher.exe"],
+            ),
+            (
+                "\"/opt/kjk-launcher\" --play %command%",
+                20,
+                &["\"/opt/kjk-launcher\"", "--play %command%"],
+            ),
+            // A name longer than the line keeps a line of its own.
+            (
+                "/a/averyveryverylongname/b",
+                8,
+                &["/a/", "averyveryverylongname/", "b"],
+            ),
+        ];
+        for (words, room, expected) in cases {
+            assert_eq!(wrap_at_separators(words, fits(room)), expected, "{words}");
+        }
+    }
 }
