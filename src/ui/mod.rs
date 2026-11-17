@@ -309,6 +309,12 @@ impl App {
 }
 
 impl eframe::App for App {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if let App::Ready(ready) = self {
+            ready.shot.input(raw);
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         match self {
             App::Broken(error) => {
@@ -1048,6 +1054,7 @@ impl Ready {
         if widgets::notice(ui, status, &words) {
             self.notice = None;
         }
+        ui.add_space(theme::SPACE_3);
     }
 
     /// The download or move in progress: what it is doing, a progress

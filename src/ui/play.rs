@@ -430,7 +430,11 @@ impl Ready {
         let mut picked = None;
         let mut show_all = false;
         let busy = self.job.is_some();
-        let open = std::mem::take(&mut self.open_menu).then_some(egui::SetOpenCommand::Bool(true));
+        // A click, or Enter or Space while the title has the focus, opens
+        // and closes the menu.
+        let open = std::mem::take(&mut self.open_menu)
+            .then_some(egui::SetOpenCommand::Bool(true))
+            .or(button.clicked().then_some(egui::SetOpenCommand::Toggle));
         egui::Popup::from_toggle_button_response(&button)
             .open_memory(open)
             .frame(widgets::raised_frame())
