@@ -1,23 +1,52 @@
-//! The Play page: the selected version, Play, the update notice and the
-//! "Before you play" rows for the games and ffmpeg.
+//! The Play page: the selected version, Play, the update notice, the
+//! "Setup" rows for the games and ffmpeg, and the selected version's
+//! release notes.
 
 use super::*;
 
 impl Ready {
+    /// When all is ready and the Setup list is closed, the release notes
+    /// fill the rest of the page and scroll inside their panel. Otherwise
+    /// the whole page scrolls.
     pub(super) fn play_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        self.progress(ui);
-
         let Some(current) = self.current().cloned() else {
-            self.nothing_installed(ui, ctx);
+            scrolling(ui, |ui| {
+                self.progress(ui);
+                self.nothing_installed(ui, ctx);
+            });
             return;
         };
-
         self.ask_kjk(ctx, &current);
         let (report, ffmpeg) = match &self.games {
             Games::Known(_, report, ffmpeg) => (report.clone(), *ffmpeg),
             _ => (None, true),
         };
-        let blocked = kjk_report::blocked_by(report.as_ref());
+        let ready = report
+            .as_ref()
+            .is_some_and(|report| kjk_report::all_ready(report, ffmpeg));
+        if ready && !self.show_details {
+            self.play_top(ui, ctx, &current, report.as_ref(), ffmpeg);
+            self.release_notes(ui, &current, true);
+        } else {
+            scrolling(ui, |ui| {
+                self.play_top(ui, ctx, &current, report.as_ref(), ffmpeg);
+                self.release_notes(ui, &current, false);
+            });
+        }
+        self.ffmpeg_window(ui.ctx());
+    }
+
+    /// The version, Play, the update notice and the Setup section.
+    fn play_top(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        current: &Installed,
+        report: Option<&Report>,
+        ffmpeg: bool,
+    ) {
+        self.progress(ui);
+        let blocked = kjk_report::blocked_by(report);
 
         ui.horizontal(|ui| {
             self.version_menu(ui, ctx, &current.tag);
@@ -71,8 +100,41 @@ impl Ready {
             ui.add_space(theme::SPACE_6);
         }
 
-        self.before_you_play(ui, &current, report.as_ref(), ffmpeg);
-        self.ffmpeg_window(ui.ctx());
+        self.before_you_play(ui, current, report, ffmpeg);
+    }
+
+    /// "What is new in 0.19.0" and the selected version's release notes on
+    /// a panel. With `fill` the panel takes the height that is left and
+    /// scrolls inside itself.
+    fn release_notes(&mut self, ui: &mut egui::Ui, current: &Installed, fill: bool) {
+        ui.add_space(theme::SPACE_6);
+        widgets::section_label(
+            ui,
+            &format!("What is new in {}", release_menu::number(&current.tag)),
+        );
+        ui.add_space(theme::SPACE_2);
+        let notes = self
+            .releases
+            .iter()
+            .find(|r| r.tag_name == current.tag)
+            .and_then(|r| r.body.as_deref())
+            .map(crate::notes::lines)
+            .filter(|lines| !lines.is_empty());
+        let Some(lines) = notes else {
+            widgets::muted(ui, "The release notes for this version are not available.");
+            return;
+        };
+        let height = ui.available_height() - 2.0 * theme::SPACE_4;
+        widgets::panel(ui, |ui| {
+            if fill {
+                egui::ScrollArea::vertical()
+                    .max_height(height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| note_lines(ui, &lines));
+            } else {
+                note_lines(ui, &lines);
+            }
+        });
     }
 
     /// Asks the selected version for its report on a background thread,
@@ -103,7 +165,7 @@ impl Ready {
         self.games = Games::Asking(current.tag.clone());
     }
 
-    /// The "Before you play" section: a row for each game.
+    /// The "Setup" section: a row for each game.
     pub(super) fn before_you_play(
         &mut self,
         ui: &mut egui::Ui,
@@ -111,7 +173,7 @@ impl Ready {
         report: Option<&Report>,
         ffmpeg: bool,
     ) {
-        widgets::section_label(ui, "Before you play");
+        widgets::section_label(ui, "Setup");
         ui.add_space(theme::SPACE_2);
         if matches!(self.games, Games::Asking(_) | Games::Stale) {
             ui.label(widgets::text(
@@ -452,5 +514,35 @@ impl Ready {
                 }
             });
         });
+    }
+}
+
+/// The whole page in a scroll area.
+fn scrolling(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, add);
+}
+
+/// Release notes: headings in the heading style, the rest in the body style.
+fn note_lines(ui: &mut egui::Ui, lines: &[crate::notes::Line]) {
+    use crate::notes::Line;
+    for line in lines {
+        match line {
+            Line::Heading(words) => {
+                ui.label(widgets::text(words, Text::Heading, theme::INK));
+            }
+            Line::Bullet(words) => {
+                ui.label(widgets::text(
+                    format!("•  {words}"),
+                    Text::Body,
+                    theme::INK_MUTED,
+                ));
+            }
+            Line::Text(words) => {
+                ui.label(widgets::text(words, Text::Body, theme::INK_MUTED));
+            }
+            Line::Gap => ui.add_space(theme::SPACE_2),
+        }
     }
 }
