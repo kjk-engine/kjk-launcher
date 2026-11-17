@@ -63,11 +63,15 @@ impl Ready {
         let Some(confirm) = &self.confirm else { return };
         let (title, text, yes, alternative) = match confirm {
             Confirm::Restore(path) => (
-                "Restore backup",
-                format!(
-                    "Replace kjk's saves and settings with {}?\n\nThe present ones are backed up first. Close kjk before you continue.",
-                    path.file_name().unwrap_or_default().to_string_lossy()
-                ),
+                "Restore a backup",
+                vec![
+                    format!(
+                        "The saves and settings of kjk are replaced with those in {}.",
+                        path.file_name().unwrap_or_default().to_string_lossy()
+                    ),
+                    "The launcher backs up the present ones first.".to_string(),
+                    "Close kjk before you restore.".to_string(),
+                ],
                 "Restore",
                 None,
             ),
@@ -79,58 +83,61 @@ impl Ready {
                     .and_then(|i| self.sizes.get(&i.dir))
                     .copied()
                     .unwrap_or(0);
-                let mut text = format!("Delete kjk {tag} ({}) from this computer? Saves are not touched.", megabytes(size));
+                let mut text = vec![
+                    format!("kjk {tag} is deleted from this computer. It frees {}.", megabytes(size)),
+                    "Your saves are not touched.".to_string(),
+                ];
                 if self.config.current.as_deref() == Some(tag.as_str()) {
-                    match self.installed.iter().find(|i| &i.tag != tag) {
-                        Some(next) => text.push_str(&format!("\n\nPlay will start {} instead.", next.tag)),
-                        None => text.push_str("\n\nNo other version is installed."),
-                    }
+                    text.push(match self.installed.iter().find(|i| &i.tag != tag) {
+                        Some(next) => format!("Play then starts {}.", next.tag),
+                        None => "No other version is installed.".to_string(),
+                    });
                 }
-                ("Uninstall version", text, "Uninstall", None)
+                ("Uninstall a version", text, "Uninstall", None)
             }
             Confirm::UseOlder(tag) => (
                 "Go back to an older version",
-                format!(
-                    "Saves made or opened by a newer version may not load in {tag}.\n\nIf they don't, restore the backup taken before you updated (Backups tab)."
-                ),
-                "Use it",
+                vec![
+                    format!("A save made or opened by a newer version may not load in {tag}."),
+                    "If a save does not load, restore the backup from before the update on the Backups page.".to_string(),
+                ],
+                "Select it",
                 None,
             ),
             Confirm::ChangeFolder(dir) => (
-                "Change install folder",
-                format!(
-                    "Install new versions in {}?\n\nThe {} installed version(s) can move there too, or stay in {} (the launcher then no longer lists them).",
-                    dir.display(),
-                    self.installed.len(),
-                    self.paths.versions.display()
-                ),
+                "Change the install folder",
+                vec![
+                    format!("New versions are installed in {}.", dir.display()),
+                    format!(
+                        "The {} installed versions can move there too. If they stay in {}, the launcher no longer lists them.",
+                        self.installed.len(),
+                        self.paths.versions.display()
+                    ),
+                ],
                 "Move them",
                 Some("Leave them"),
             ),
         };
         let mut answer = None;
-        egui::Window::new(title)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ctx, |ui| {
-                ui.set_max_width(440.0);
-                ui.label(text);
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button(RichText::new(yes).strong()).clicked() {
-                        answer = Some(Some(true));
+        dialog(ctx, title, |ui| {
+            for sentence in text {
+                ui.label(widgets::text(sentence, Text::Body, theme::INK));
+            }
+            ui.add_space(theme::SPACE_3);
+            ui.horizontal(|ui| {
+                if widgets::primary_button(ui, yes).clicked() {
+                    answer = Some(Some(true));
+                }
+                if let Some(alternative) = alternative {
+                    if widgets::secondary_button(ui, alternative).clicked() {
+                        answer = Some(Some(false));
                     }
-                    if let Some(alternative) = alternative {
-                        if ui.button(alternative).clicked() {
-                            answer = Some(Some(false));
-                        }
-                    }
-                    if ui.button("Cancel").clicked() {
-                        answer = Some(None);
-                    }
-                });
+                }
+                if widgets::secondary_button(ui, "Cancel").clicked() {
+                    answer = Some(None);
+                }
             });
+        });
         let Some(answer) = answer else { return };
         let confirm = self.confirm.take().unwrap();
         let Some(yes) = answer else { return };
