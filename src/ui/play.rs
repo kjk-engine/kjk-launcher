@@ -51,9 +51,15 @@ impl Ready {
         ui.horizontal(|ui| {
             self.version_menu(ui, ctx, &current.tag);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Play closes the launcher, which would stop a download or
+                // a move half way, so it waits for the job to end.
+                let can_play = blocked.is_none() && self.job.is_none();
                 let play = ui
-                    .add_enabled_ui(blocked.is_none(), |ui| widgets::primary_button(ui, "Play"))
+                    .add_enabled_ui(can_play, |ui| widgets::primary_button(ui, "Play"))
                     .inner;
+                if self.focus_start && can_play {
+                    play.request_focus();
+                }
                 if play.clicked() {
                     match launch::play(&self.paths, &mut self.config, &self.args) {
                         Ok(started) if self.from_steam => {
@@ -100,7 +106,7 @@ impl Ready {
             ui.add_space(theme::SPACE_6);
         }
 
-        self.before_you_play(ui, current, report, ffmpeg);
+        self.before_you_play(ui, report, ffmpeg);
     }
 
     /// "What is new in 0.19.0" and the selected version's release notes on
@@ -169,7 +175,6 @@ impl Ready {
     pub(super) fn before_you_play(
         &mut self,
         ui: &mut egui::Ui,
-        current: &Installed,
         report: Option<&Report>,
         ffmpeg: bool,
     ) {
@@ -212,7 +217,7 @@ impl Ready {
         for game in Game::ALL {
             widgets::hairline(ui);
             let status = report.status(game).cloned().unwrap_or(GameStatus::Missing);
-            self.game_row(ui, current, game, &status);
+            self.game_row(ui, game, &status);
         }
         widgets::hairline(ui);
         self.ffmpeg_row(ui, ffmpeg);
@@ -253,54 +258,35 @@ impl Ready {
 
     /// One game's row: its name, its folder or why kjk needs it, its status
     /// and a button to choose the folder.
-    pub(super) fn game_row(
-        &mut self,
-        ui: &mut egui::Ui,
-        current: &Installed,
-        game: Game,
-        status: &GameStatus,
-    ) {
-        ui.add_space(theme::SPACE_3);
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
+    pub(super) fn game_row(&mut self, ui: &mut egui::Ui, game: Game, status: &GameStatus) {
+        let found = matches!(status, GameStatus::Found { .. });
+        let label = if found {
+            "Change folder"
+        } else {
+            "Choose folder"
+        };
+        let checking = self.folder_check.as_ref().map(|check| check.game);
+        let (mut pick, mut typed) = (false, false);
+        widgets::row(
+            ui,
+            |ui| {
                 ui.label(widgets::text(game.name(), Text::Heading, theme::INK));
                 match status {
                     GameStatus::Found { path, .. } | GameStatus::Refused { path, .. } => {
-                        ui.label(widgets::text(
-                            path.display().to_string(),
-                            Text::Mono,
-                            theme::INK_MUTED,
-                        ));
+                        widgets::wrapped_mono(ui, &path.display().to_string(), theme::INK_MUTED);
                     }
-                    GameStatus::Missing => {
-                        ui.label(widgets::text(
-                            game.needed_for(),
-                            Text::Body,
-                            theme::INK_MUTED,
-                        ));
-                    }
+                    GameStatus::Missing => widgets::muted(ui, game.needed_for()),
                 }
                 let why = match status {
                     GameStatus::Refused { why, .. } => Some(why.clone()),
                     _ => None,
                 };
                 if let Some(why) = self.folder_problems.get(game.key()).cloned().or(why) {
-                    ui.label(widgets::text(why, Text::Body, theme::INK_MUTED));
+                    widgets::muted(ui, why);
                 }
-            });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let found = matches!(status, GameStatus::Found { .. });
-                let label = if found {
-                    "Change folder"
-                } else {
-                    "Choose folder"
-                };
-                let checking = self.folder_check.as_ref().map(|check| check.game);
-                let pick =
-                    ui.add_enabled_ui(checking.is_none(), |ui| widgets::compact_button(ui, label));
-                if pick.inner.clicked() {
-                    self.choose_game_folder(ui.ctx(), current, game);
-                }
+            },
+            |ui| {
+                (pick, typed) = folder_buttons(ui, label, checking.is_none());
                 ui.add_space(theme::SPACE_4);
                 if checking == Some(game) {
                     ui.label(widgets::text("Checking", Text::Label, theme::INK_MUTED));
@@ -308,25 +294,30 @@ impl Ready {
                     let (dot, word) = kjk_report::status_word(status);
                     widgets::status(ui, dot, word);
                 }
-            });
-        });
-        ui.add_space(theme::SPACE_3);
+            },
+        );
+        if pick {
+            self.choose_game_folder(ui.ctx(), game);
+        }
+        if typed {
+            self.type_folder(FolderFor::Game(game));
+        }
     }
 
-    /// Asks for a folder. kjk checks it on a background thread, and the
-    /// folder is saved in kjk's settings only when kjk finds the game there.
-    pub(super) fn choose_game_folder(
-        &mut self,
-        ctx: &egui::Context,
-        current: &Installed,
-        game: Game,
-    ) {
-        let Some(folder) = rfd::FileDialog::new()
-            .set_title(format!("Choose the {} folder", game.name()))
-            .pick_folder()
-        else {
+    /// Asks for a game's folder.
+    pub(super) fn choose_game_folder(&mut self, ctx: &egui::Context, game: Game) {
+        if let Some(folder) = self.ask_folder(FolderFor::Game(game)) {
+            self.game_folder_chosen(ctx, game, folder);
+        }
+    }
+
+    /// kjk checks `folder` on a background thread, and the folder is saved
+    /// in kjk's settings only when kjk finds the game there.
+    pub(super) fn game_folder_chosen(&mut self, ctx: &egui::Context, game: Game, folder: PathBuf) {
+        let Some(current) = self.current().cloned() else {
             return;
         };
+        self.clear_error();
         let kjk = install::game_binary(&current.dir);
         let settings = self.paths.settings();
         let (tx, rx) = mpsc::channel();
@@ -398,10 +389,16 @@ impl Ready {
         ))
         .cloned();
         match newest {
+            // While a version installs, the progress line above says so.
+            Some(_) if self.job.is_some() => {}
             Some(release) => {
                 ui.horizontal(|ui| {
                     let label = format!("Install {}", release_menu::title(&release.tag_name));
-                    if widgets::primary_button(ui, &label).clicked() && self.job.is_none() {
+                    let install = widgets::primary_button(ui, &label);
+                    if self.focus_start {
+                        install.request_focus();
+                    }
+                    if install.clicked() {
                         self.start_install(ctx, release, true);
                     }
                     if widgets::secondary_button(ui, "Show all versions").clicked() {
@@ -432,6 +429,7 @@ impl Ready {
         );
         let mut picked = None;
         let mut show_all = false;
+        let busy = self.job.is_some();
         let open = std::mem::take(&mut self.open_menu).then_some(egui::SetOpenCommand::Bool(true));
         egui::Popup::from_toggle_button_response(&button)
             .open_memory(open)
@@ -460,7 +458,16 @@ impl Ready {
                                     }
                                     (release_menu::State::NotInstalled, false) => "Not installed",
                                 };
-                                if widgets::menu_row(ui, &row.tag, Text::Mono, state).clicked() {
+                                // A second install cannot start during a job.
+                                let enabled =
+                                    !busy || row.state != release_menu::State::NotInstalled;
+                                let clicked = ui
+                                    .add_enabled_ui(enabled, |ui| {
+                                        widgets::menu_row(ui, &row.tag, Text::Mono, state)
+                                    })
+                                    .inner
+                                    .clicked();
+                                if clicked {
                                     picked = Some(row.clone());
                                 }
                             }
@@ -511,7 +518,12 @@ impl Ready {
                     self.config.skipped = Some(offer.tag_name.clone());
                     self.save();
                 }
-                if widgets::secondary_button(ui, "Update").clicked() && self.job.is_none() {
+                let update = ui
+                    .add_enabled_ui(self.job.is_none(), |ui| {
+                        widgets::secondary_button(ui, "Update")
+                    })
+                    .inner;
+                if update.clicked() {
                     self.start_install(ctx, offer.clone(), true);
                 }
             });

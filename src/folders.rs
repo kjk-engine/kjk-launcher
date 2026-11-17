@@ -117,6 +117,32 @@ pub fn refuse_move(from: &Path, to: &Path) -> Option<String> {
     None
 }
 
+/// Whether `KJK_LAUNCHER_TYPE_PATHS=1` asks for folders to be typed in the
+/// launcher instead of chosen in the system's folder dialog.
+pub fn type_paths() -> bool {
+    std::env::var("KJK_LAUNCHER_TYPE_PATHS").is_ok_and(|v| v == "1")
+}
+
+/// The folder a player typed or pasted: surrounding spaces and quotes are
+/// dropped, and a leading `~` stands for `home`. It must be a full path to
+/// a folder that exists, as a folder picked in the system's dialog is.
+pub fn typed_folder(typed: &str, home: Option<&Path>) -> Result<PathBuf, String> {
+    let typed = typed.trim().trim_matches(|c| c == '"' || c == '\'');
+    let path = match (typed.strip_prefix('~'), home) {
+        (Some(rest), Some(home)) if rest.is_empty() || rest.starts_with(['/', '\\']) => {
+            home.join(rest.trim_start_matches(['/', '\\']))
+        }
+        _ => PathBuf::from(typed),
+    };
+    if typed.is_empty() || !path.is_absolute() {
+        return Err("Type the folder's full path.".into());
+    }
+    if !path.is_dir() {
+        return Err(format!("There is no folder at {}.", path.display()));
+    }
+    Ok(path)
+}
+
 /// Whether `dir` already is a kjk folder: it has kjk's settings or saves.
 pub fn is_kjk_folder(dir: &Path) -> bool {
     dir.join("settings.json").is_file() || dir.join("saves").is_dir()
@@ -354,6 +380,38 @@ mod tests {
             Some(installs.clone())
         );
         assert_eq!(read(&installs.join("0.19.0/kjk")), "game");
+    }
+
+    #[test]
+    fn typed_folders() {
+        let dir = scratch("typed");
+        let games = dir.join("Games");
+        fs::create_dir_all(&games).unwrap();
+        let shown = games.display().to_string();
+        let home = Some(dir.as_path());
+        let ok = [
+            shown.clone(),
+            format!("  {shown}  "),
+            format!("\"{shown}\""),
+            "~/Games".to_string(),
+        ];
+        for typed in &ok {
+            assert_eq!(typed_folder(typed, home), Ok(games.clone()), "{typed}");
+        }
+        assert_eq!(typed_folder("~", home), Ok(dir.clone()));
+        for typed in ["", "   ", "Games", "~/Games"] {
+            let home = if typed.starts_with('~') { None } else { home };
+            assert_eq!(
+                typed_folder(typed, home),
+                Err("Type the folder's full path.".to_string()),
+                "{typed}"
+            );
+        }
+        let missing = dir.join("Missing");
+        assert_eq!(
+            typed_folder(&missing.display().to_string(), home),
+            Err(format!("There is no folder at {}.", missing.display()))
+        );
     }
 
     #[test]

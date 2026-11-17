@@ -6,6 +6,8 @@
 //! `KJK_LAUNCHER_MENU=ffmpeg` opens the "Install ffmpeg" dialog.
 //! `KJK_LAUNCHER_MENU=move:<folder>` opens the dialog that asks to move
 //! kjk's folder there (nothing moves unless that dialog is answered).
+//! `KJK_LAUNCHER_MENU=type:<text>` opens the dialog for a typed folder path
+//! with that text in it.
 //! `KJK_LAUNCHER_SCROLL=<points>` scrolls the Versions and Settings pages
 //! down that far.
 
@@ -78,6 +80,16 @@ pub fn ffmpeg_open() -> bool {
 /// How far `KJK_LAUNCHER_SCROLL` scrolls the page down, in points.
 pub fn scroll() -> Option<f32> {
     std::env::var("KJK_LAUNCHER_SCROLL").ok()?.parse().ok()
+}
+
+/// The text in the dialog for a typed path that `KJK_LAUNCHER_MENU=type`
+/// or `type:<text>` opens.
+pub fn typed_open() -> Option<String> {
+    let menu = std::env::var("KJK_LAUNCHER_MENU").ok()?;
+    if menu == "type" {
+        return Some(String::new());
+    }
+    menu.strip_prefix("type:").map(str::to_string)
 }
 
 /// The folder `KJK_LAUNCHER_MENU=move:<folder>` names.
