@@ -177,6 +177,13 @@ pub fn move_kjk_folder(
     point_to(default, to)
 }
 
+/// Where `path` is after kjk's folder moved from `from` to `to`: the same
+/// place inside `to` when `path` was inside `from`, else `None` (the path
+/// did not move).
+pub fn follow_move(path: &Path, from: &Path, to: &Path) -> Option<PathBuf> {
+    path.strip_prefix(from).ok().map(|inside| to.join(inside))
+}
+
 /// Records `to` as kjk's folder in `moved-to.txt` in the default folder
 /// `default`, or deletes that file when `to` is the default folder.
 pub fn point_to(default: &Path, to: &Path) -> Result<(), String> {
@@ -326,6 +333,27 @@ mod tests {
         assert!(result.is_err());
         assert!(default.join("settings.json").is_file());
         assert!(!inside.exists());
+    }
+
+    #[test]
+    fn install_folder_follows_the_move() {
+        let dir = scratch("move-install-dir");
+        let (default, to) = (dir.join("default"), dir.join("elsewhere"));
+        kjk_folder(&default);
+        let installs = default.join("my-installs");
+        write(&installs.join("0.19.0/kjk"), "game");
+        move_kjk_folder(&default, &to, &default, &Progress::default()).unwrap();
+        let followed = follow_move(&installs, &default, &to).unwrap();
+        assert_eq!(followed, to.join("my-installs"));
+        assert_eq!(read(&followed.join("0.19.0/kjk")), "game");
+        // A folder outside the kjk folder stays where it is.
+        assert_eq!(follow_move(&dir.join("other"), &default, &to), None);
+        move_kjk_folder(&to, &default, &default, &Progress::default()).unwrap();
+        assert_eq!(
+            follow_move(&followed, &to, &default),
+            Some(installs.clone())
+        );
+        assert_eq!(read(&installs.join("0.19.0/kjk")), "game");
     }
 
     #[test]
