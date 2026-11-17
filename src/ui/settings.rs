@@ -179,7 +179,7 @@ impl Ready {
                     if default.is_some() {
                         widgets::muted(
                             ui,
-                            "kjk versions before 0.20 still write their logs in the default folder.",
+                            "kjk versions before 0.19.2 still write their logs in the default folder.",
                         );
                         ui.add_space(theme::SPACE_1);
                         back = ui
