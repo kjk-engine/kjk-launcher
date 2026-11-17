@@ -709,6 +709,31 @@ impl Ready {
         self.shot.frame(ctx, busy);
     }
 
+    /// The mark's size in the top bar.
+    fn mark_size(&self) -> Option<egui::Vec2> {
+        self.mark
+            .as_ref()
+            .map(|mark| egui::vec2(theme::MARK * mark.aspect_ratio(), theme::MARK))
+    }
+
+    /// How wide the mark and the word "kjk-engine" are together.
+    fn name_width(&self, ui: &egui::Ui) -> f32 {
+        let mark = self.mark_size().map_or(0.0, |size| size.x + theme::SPACE_2);
+        mark + widgets::width(ui, "kjk-engine", Text::Wordmark)
+    }
+
+    /// Paints the mark and the word "kjk-engine" from `left`, centred on
+    /// `middle`, and returns where they end.
+    fn name(&self, ui: &egui::Ui, left: f32, middle: f32) -> f32 {
+        let mut x = left;
+        if let (Some(mark), Some(size)) = (&self.mark, self.mark_size()) {
+            let rect = egui::Rect::from_min_size(egui::pos2(x, middle - size.y / 2.0), size);
+            egui::Image::new(mark).paint_at(ui, rect);
+            x = rect.right() + theme::SPACE_2;
+        }
+        widgets::paint_centred(ui, "kjk-engine", Text::Wordmark, theme::INK, x, middle).right()
+    }
+
     /// The mark, the word "kjk-engine" and the tab names, all centred on
     /// the middle of the bar, which ends in a hairline. The open tab is
     /// `INK` with a 1px `INK` line on that hairline under its name, the
@@ -718,14 +743,12 @@ impl Ready {
         frame::bar_background(ui, whole);
         let middle = whole.center().y;
         let mut x = whole.left() + bar.left;
-        if let Some(mark) = &self.mark {
-            let size = egui::vec2(theme::MARK * mark.aspect_ratio(), theme::MARK);
-            let rect = egui::Rect::from_min_size(egui::pos2(x, middle - theme::MARK / 2.0), size);
-            egui::Image::new(mark).paint_at(ui, rect);
-            x = rect.right() + theme::SPACE_2;
+        if bar.name_at_right {
+            let right = whole.right() - bar.right;
+            self.name(ui, right - self.name_width(ui), middle);
+        } else {
+            x = self.name(ui, x, middle) + theme::SPACE_8;
         }
-        let word = widgets::paint_centred(ui, "kjk-engine", Text::Wordmark, theme::INK, x, middle);
-        x = word.right() + theme::SPACE_8;
         let mut underline = None;
         for tab in Tab::ALL {
             let open = self.tab == tab;

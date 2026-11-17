@@ -97,6 +97,14 @@ pub fn x_middle(ui: &egui::Ui, style: Text) -> f32 {
     }
 }
 
+/// How wide `words` are in `style`.
+pub fn width(ui: &egui::Ui, words: &str, style: Text) -> f32 {
+    ui.painter()
+        .layout_no_wrap(words.to_string(), theme::font(style), theme::INK)
+        .size()
+        .x
+}
+
 /// Paints `words` with the middle of their x-height on `middle_y`, from
 /// `left`, and returns where they are.
 pub fn paint_centred(
