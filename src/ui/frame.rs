@@ -54,6 +54,10 @@ pub(super) fn start(ctx: &egui::Context) {
 pub(super) struct Bar {
     pub left: f32,
     pub right: f32,
+    /// The mark and "kjk-engine" sit at the right end, and the tabs start
+    /// the bar. On macOS the system's window buttons are at the left, so
+    /// the tabs follow them and the name balances the bar at the other end.
+    pub name_at_right: bool,
 }
 
 pub(super) fn bar(ctx: &egui::Context) -> Bar {
@@ -62,15 +66,21 @@ pub(super) fn bar(ctx: &egui::Context) -> Bar {
         Kind::MacMerged => {
             let fullscreen = ctx.input(|i| i.viewport().fullscreen) == Some(true);
             let left = if fullscreen { side } else { theme::MAC_BUTTONS };
-            Bar { left, right: side }
+            Bar {
+                left,
+                right: side,
+                name_at_right: true,
+            }
         }
         Kind::WindowsMerged => Bar {
             left: side,
             right: 0.0,
+            name_at_right: false,
         },
         Kind::System => Bar {
             left: side,
             right: side,
+            name_at_right: false,
         },
     }
 }
