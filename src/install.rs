@@ -522,7 +522,7 @@ pub fn move_installs(versions: &[Installed], to: &Path, progress: &Progress) -> 
     for (i, (version, size)) in versions.iter().zip(&sizes).enumerate() {
         progress.stage(format!(
             "Moving {} ({} of {})",
-            version.tag,
+            crate::versions::title(&version.tag),
             i + 1,
             versions.len()
         ));
@@ -532,8 +532,8 @@ pub fn move_installs(versions: &[Installed], to: &Path, progress: &Progress) -> 
         let target = to.join(name);
         if target.exists() {
             result.problems.push(format!(
-                "{} is already in the new folder; left the old copy",
-                version.tag
+                "{} is already in the new folder, so the old copy stays where it was",
+                crate::versions::title(&version.tag)
             ));
             progress.done.fetch_add(*size, Ordering::Relaxed);
             continue;

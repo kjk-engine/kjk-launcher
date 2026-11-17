@@ -29,11 +29,10 @@ impl Ready {
         let words: Vec<Vec<String>> = installed
             .iter()
             .map(|i| {
-                let size = megabytes(self.sizes.get(&i.dir).copied().unwrap_or(0));
                 vec![
                     release_menu::shown_tag(&i.tag).to_string(),
                     github::long_date(i.published_at.as_deref()),
-                    size,
+                    size(self.sizes.get(&i.dir).copied().unwrap_or(0)),
                 ]
             })
             .chain(releases.iter().map(|r| {
@@ -65,8 +64,11 @@ impl Ready {
         for (version, line) in installed.iter().zip(&cells) {
             widgets::hairline(ui);
             let selected = current.as_deref() == Some(version.tag.as_str());
+            let idle = self.job.is_none();
             let line = widgets::list_line(ui, &starts, line, |ui| {
-                if widgets::compact_button(ui, "Uninstall").clicked() {
+                let uninstall =
+                    ui.add_enabled_ui(idle, |ui| widgets::compact_button(ui, "Uninstall"));
+                if uninstall.inner.clicked() {
                     self.confirm = Some(Confirm::Uninstall(version.tag.clone()));
                 }
                 if selected {

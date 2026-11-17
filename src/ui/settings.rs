@@ -21,7 +21,7 @@ impl Ready {
             (&mut self.config.pinned, "Never show update notices"),
         ];
         for (value, label) in checks {
-            changed |= ui.checkbox(value, label).changed();
+            changed |= widgets::checkbox(ui, value, label).changed();
         }
         if let Some(skipped) = self.config.skipped.clone() {
             widgets::line(ui, |ui| {
@@ -46,12 +46,12 @@ impl Ready {
         ui.add_space(theme::SPACE_6);
 
         widgets::section_label(ui, "Storage");
-        changed |= ui
-            .checkbox(
-                &mut self.config.backup_before_new_version,
-                "Back up the saves before a version starts for the first time",
-            )
-            .changed();
+        changed |= widgets::checkbox(
+            ui,
+            &mut self.config.backup_before_new_version,
+            "Back up the saves before a version starts for the first time",
+        )
+        .changed();
         let older = !install::older(&self.paths, &self.config).is_empty();
         let delete = ui
             .add_enabled_ui(older && self.job.is_none(), |ui| {
@@ -104,7 +104,7 @@ impl Ready {
             .take(shown)
             .map(|b| {
                 let (when, why) = backup::describe(&b.name);
-                (b.path.clone(), [when, why, megabytes(b.size)])
+                (b.path.clone(), [when, why, size(b.size)])
             })
             .collect();
         let cells: Vec<Vec<widgets::Cell>> = words
@@ -120,10 +120,13 @@ impl Ready {
             })
             .collect();
         let starts = widgets::columns(ui, &cells);
+        // Backups and restores wait while a job moves or installs files.
+        let idle = self.job.is_none();
         for ((path, _), line) in words.iter().zip(&cells) {
             widgets::hairline(ui);
             widgets::list_line(ui, &starts, line, |ui| {
-                if widgets::compact_button(ui, "Restore").clicked() {
+                let restore = ui.add_enabled_ui(idle, |ui| widgets::compact_button(ui, "Restore"));
+                if restore.inner.clicked() {
                     self.confirm = Some(Confirm::Restore(path.clone()));
                 }
             });
@@ -139,7 +142,8 @@ impl Ready {
         }
         ui.add_space(theme::SPACE_2);
         widgets::line(ui, |ui| {
-            if widgets::compact_button(ui, "Back up now").clicked() {
+            let back_up = ui.add_enabled_ui(idle, |ui| widgets::compact_button(ui, "Back up now"));
+            if back_up.inner.clicked() {
                 self.notice = Some(match backup::create(&self.paths, "manual") {
                     Ok(Some(_)) => Notice::Info("The saves and the settings are backed up.".into()),
                     Ok(None) => Notice::Info("kjk has no saves or settings yet.".into()),
@@ -161,35 +165,33 @@ impl Ready {
             // KJK_HOME is the player's own choice of folder.
             let movable = idle && std::env::var_os("KJK_HOME").is_none();
             let default = config::default_kjk_folder().filter(|_| config::kjk_folder_moved());
-            let (mut back, mut pick) = (false, false);
+            let (mut back, mut pick, mut typed) = (false, false, false);
             widgets::hairline(ui);
             widgets::row(
                 ui,
                 |ui| {
                     ui.label(widgets::text("kjk folder", Text::Heading, theme::INK));
-                    ui.label(widgets::text(
-                        dir.display().to_string(),
-                        Text::Mono,
-                        theme::INK_MUTED,
-                    ));
+                    widgets::wrapped_mono(ui, &dir.display().to_string(), theme::INK_MUTED);
                     widgets::muted(
                         ui,
                         "Saves, settings, logs, backups and installed versions are in this folder.",
                     );
                     if default.is_some() {
+                        widgets::muted(
+                            ui,
+                            "kjk versions before 0.20 still write their logs in the default folder.",
+                        );
+                        ui.add_space(theme::SPACE_1);
                         back = ui
                             .add_enabled_ui(movable, |ui| {
-                                widgets::text_button(ui, "Use the default folder")
+                                widgets::compact_button(ui, "Use the default folder")
                             })
                             .inner
                             .clicked();
                     }
                 },
                 |ui| {
-                    pick = ui
-                        .add_enabled_ui(movable, |ui| widgets::compact_button(ui, "Move"))
-                        .inner
-                        .clicked();
+                    (pick, typed) = folder_buttons(ui, "Move", movable);
                     if widgets::compact_button(ui, "Open").clicked() {
                         launch::open_folder(&dir);
                     }
@@ -197,6 +199,9 @@ impl Ready {
             );
             if pick {
                 self.pick_kjk_folder();
+            }
+            if typed {
+                self.type_folder(FolderFor::KjkFolder);
             }
             if let Some(default) = default.filter(|_| back) {
                 self.confirm = Some(Confirm::MoveKjk(default));
@@ -216,12 +221,15 @@ impl Ready {
         );
         let launcher = std::env::current_exe().unwrap_or_default();
         let line = crate::args::steam_line(&launcher);
-        widgets::line(ui, |ui| {
-            ui.label(widgets::text(&line, Text::Mono, theme::INK));
-            if widgets::compact_button(ui, "Copy").clicked() {
-                ui.ctx().copy_text(line.clone());
-            }
-        });
+        let mut copy = false;
+        widgets::row(
+            ui,
+            |ui| widgets::wrapped_mono(ui, &line, theme::INK),
+            |ui| copy = widgets::compact_button(ui, "Copy").clicked(),
+        );
+        if copy {
+            ui.ctx().copy_text(line.clone());
+        }
         widgets::muted(
             ui,
             "Steam then starts kjk through this launcher when you press Play on that game.",

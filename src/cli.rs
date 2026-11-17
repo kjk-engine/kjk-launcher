@@ -5,6 +5,7 @@ use crate::config::{Config, Paths};
 use crate::github::{self, Release};
 use crate::install::{self, Progress};
 use crate::launch;
+use crate::size::size;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
@@ -129,7 +130,7 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
         }
         "backups" => {
             for b in backup::list(&paths) {
-                println!("{:>8.1} MB  {}", b.size as f64 / 1e6, b.name);
+                println!("{:>8}  {}", size(b.size), b.name);
             }
             Ok(())
         }
@@ -209,8 +210,24 @@ fn status(paths: &Paths, config: &Config) -> Result<(), String> {
         .as_deref()
         .and_then(|tag| installed.iter().find(|i| i.tag == tag))
         .map(|i| i.key());
+    if current.is_none() {
+        let installable = github::installable(&releases.list, config.prereleases);
+        match github::newest(&installable) {
+            Some(newest) => println!(
+                "no version is installed; the newest is {} ({})",
+                crate::versions::number(&newest.tag_name),
+                newest.date()
+            ),
+            None => println!("no version is installed, and no release was found"),
+        }
+        return Ok(());
+    }
     match github::offer(&releases.list, config, current) {
-        Some(release) => println!("update offered:  {} ({})", release.tag_name, release.date()),
+        Some(release) => println!(
+            "update offered:  {} ({})",
+            crate::versions::number(&release.tag_name),
+            release.date()
+        ),
         None => println!("no update offered"),
     }
     Ok(())
@@ -253,9 +270,9 @@ fn install_with_progress(paths: &Paths, release: &Release) -> Result<install::In
         let (stage, done, total) = progress.snapshot();
         let percent = (done * 100).checked_div(total).unwrap_or(0);
         eprint!(
-            "\r{stage}: {:.1} / {:.1} MB ({percent}%)   ",
-            done as f64 / 1e6,
-            total as f64 / 1e6
+            "\r{stage}: {} / {} ({percent}%)   ",
+            size(done),
+            size(total)
         );
         let _ = std::io::stderr().flush();
         std::thread::sleep(Duration::from_millis(250));

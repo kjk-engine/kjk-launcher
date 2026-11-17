@@ -18,6 +18,7 @@ pub mod notes;
 pub mod run;
 pub mod selfupdate;
 pub mod shot;
+pub mod size;
 pub mod theme;
 pub mod ui;
 pub mod versions;
