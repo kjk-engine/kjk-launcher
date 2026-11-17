@@ -41,7 +41,7 @@ pub const DOT: f32 = 8.0;
 /// The top bar's height, with its hairline at the bottom.
 pub const TOP_BAR: f32 = 48.0;
 /// The mark's height in the top bar. Its width follows the picture.
-pub const MARK: f32 = 22.0;
+pub const MARK: f32 = 28.0;
 /// The progress line's height.
 pub const PROGRESS: f32 = 2.0;
 /// The chevron after the version title.
