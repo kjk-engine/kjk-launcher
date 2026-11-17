@@ -60,6 +60,14 @@ pub const DIALOG_WIDTH: f32 = 440.0;
 pub const MAC_BUTTONS: f32 = 80.0;
 pub const MAC_TITLE_BAR: f32 = 28.0;
 
+/// Windows: a window button's area, the size of its glyph, how far the
+/// two squares of the restore glyph are apart, and the edge zone that
+/// resizes the window.
+pub const WINDOW_BUTTON: egui::Vec2 = egui::vec2(46.0, 32.0);
+pub const WINDOW_GLYPH: f32 = 10.0;
+pub const RESTORE_OFFSET: f32 = 2.0;
+pub const RESIZE_EDGE: f32 = 6.0;
+
 /// The window's size when it opens, and the smallest it can be made.
 pub const WINDOW: [f32; 2] = [960.0, 600.0];
 pub const WINDOW_MIN: [f32; 2] = [800.0, 520.0];
