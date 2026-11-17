@@ -96,7 +96,16 @@ impl Paths {
             .map(PathBuf::from)
             .or_else(|| dirs::data_local_dir().map(|dir| dir.join("kjk-launcher")))
             .ok_or("could not tell where to keep the launcher's files (no home folder)")?;
-        let paths = Paths {
+        let paths = Paths::at(root);
+        for dir in [&paths.root, &paths.backups, &paths.downloads] {
+            fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        Ok(paths)
+    }
+
+    /// The launcher's files in `root`, without making any folder.
+    pub fn at(root: PathBuf) -> Paths {
+        Paths {
             versions: root.join("kjk-engine"),
             backups: root.join("backups"),
             downloads: root.join("downloads"),
@@ -104,11 +113,7 @@ impl Paths {
             cache_file: root.join("releases-cache.json"),
             kjk_data: kjk_folder(),
             root,
-        };
-        for dir in [&paths.root, &paths.backups, &paths.downloads] {
-            fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
-        Ok(paths)
     }
 
     pub fn default_install_dir(&self) -> PathBuf {

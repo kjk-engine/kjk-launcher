@@ -28,7 +28,10 @@ use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
-pub fn run(args: Vec<String>) -> eframe::Result {
+/// Opens the window. `steam` is the sentence to show when `--play` could
+/// not start kjk at once. The window then hides after Play and the
+/// launcher exits when kjk does, so Steam counts the whole session.
+pub fn run(args: Vec<String>, steam: Option<String>) -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: frame::viewport(
             egui::ViewportBuilder::default()
@@ -41,7 +44,7 @@ pub fn run(args: Vec<String>) -> eframe::Result {
     eframe::run_native(
         "kjk launcher",
         options,
-        Box::new(move |cc| Ok(Box::new(App::new(&cc.egui_ctx, args)))),
+        Box::new(move |cc| Ok(Box::new(App::new(&cc.egui_ctx, args, steam)))),
     )
 }
 
@@ -112,6 +115,7 @@ enum Games {
 }
 
 enum Notice {
+    Warn(String),
     Info(String),
     Error(String),
 }
@@ -135,6 +139,9 @@ struct Ready {
     tab: Tab,
     /// Passed to kjk when Play starts it.
     args: Vec<String>,
+    /// Opened by `--play`: after Play the window hides, and the launcher
+    /// exits when kjk does.
+    from_steam: bool,
     mark: Option<egui::TextureHandle>,
     /// What the selected version reports about its game folders and ffmpeg.
     games: Games,
@@ -157,7 +164,7 @@ enum App {
 }
 
 impl App {
-    fn new(ctx: &egui::Context, args: Vec<String>) -> App {
+    fn new(ctx: &egui::Context, args: Vec<String>, steam: Option<String>) -> App {
         theme::install(ctx);
         frame::start(ctx);
         match crate::config::open() {
@@ -180,6 +187,7 @@ impl App {
                     notice: None,
                     tab: Tab::from_env(),
                     args,
+                    from_steam: steam.is_some(),
                     mark: theme::mark(ctx),
                     games: Games::Stale,
                     asking: None,
@@ -190,6 +198,7 @@ impl App {
                     shot: Shot::from_env(),
                 };
                 ready.refresh();
+                ready.notice = steam.map(Notice::Warn);
                 if ready.config.check_on_start {
                     ready.check(ctx);
                 }
@@ -569,6 +578,7 @@ impl Ready {
     fn status_line(&mut self, ui: &mut egui::Ui) {
         match &self.notice {
             Some(Notice::Info(text)) => widgets::status(ui, Status::Ok, text),
+            Some(Notice::Warn(text)) => widgets::status(ui, Status::Warn, text),
             Some(Notice::Error(text)) => widgets::status(ui, Status::Error, text),
             None => {
                 let words = if self.checking.is_some() {

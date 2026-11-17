@@ -74,6 +74,9 @@ impl Ready {
         }
         ui.add_space(theme::SPACE_6);
 
+        self.steam_section(ui);
+        ui.add_space(theme::SPACE_6);
+
         widgets::section_label(ui, "Folders");
         widgets::hairline(ui);
         self.install_folder(ui);
@@ -98,5 +101,29 @@ impl Ready {
                 crate::config::REPO
             ),
         );
+    }
+
+    /// The "Steam play time" section: the line for Steam's launch options.
+    fn steam_section(&mut self, ui: &mut egui::Ui) {
+        widgets::section_label(ui, "Steam play time");
+        widgets::muted(
+            ui,
+            "Steam can count the time you play kjk under KOTOR or KOTOR II. Open that game's Properties in Steam and paste this line into Launch options.",
+        );
+        let launcher = std::env::current_exe().unwrap_or_default();
+        let line = crate::args::steam_line(&launcher);
+        ui.horizontal(|ui| {
+            ui.label(widgets::text(&line, Text::Mono, theme::INK));
+            if widgets::secondary_button(ui, "Copy").clicked() {
+                ui.ctx().copy_text(line.clone());
+            }
+        });
+        widgets::muted(
+            ui,
+            "Steam then starts kjk through this launcher when you press Play on that game.",
+        );
+        if !cfg!(windows) {
+            widgets::muted(ui, "This has only been checked on Windows.");
+        }
     }
 }

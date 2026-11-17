@@ -27,6 +27,16 @@ impl Ready {
                     .inner;
                 if play.clicked() {
                     match launch::play(&self.paths, &mut self.config, &self.args) {
+                        Ok(started) if self.from_steam => {
+                            // Steam counts the time while the launcher runs:
+                            // it stays, hidden, until kjk exits.
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                            let mut child = started.child;
+                            std::thread::spawn(move || {
+                                let _ = child.wait();
+                                std::process::exit(0);
+                            });
+                        }
                         Ok(_) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                         Err(e) => self.notice = Some(Notice::Error(e)),
                     }
