@@ -68,18 +68,54 @@ pub enum Text {
     Wordmark,
 }
 
-/// The size and family of a text style. The families are egui's own
-/// proportional and monospace fonts until the design system's font files
-/// are added (`install_fonts`).
+/// The design system's fonts, embedded in the program: (family name, file).
+/// Their licence texts are `assets/fonts/OFL-Jost.txt` and `OFL-Geist.txt`.
+const FONTS: [(&str, &[u8]); 6] = [
+    (
+        JOST_SEMIBOLD,
+        include_bytes!("../assets/fonts/Jost-SemiBold.ttf"),
+    ),
+    (
+        GEIST_REGULAR,
+        include_bytes!("../assets/fonts/Geist-Regular.ttf"),
+    ),
+    (
+        GEIST_MEDIUM,
+        include_bytes!("../assets/fonts/Geist-Medium.ttf"),
+    ),
+    (
+        GEIST_SEMIBOLD,
+        include_bytes!("../assets/fonts/Geist-SemiBold.ttf"),
+    ),
+    (
+        GEIST_MONO_REGULAR,
+        include_bytes!("../assets/fonts/GeistMono-Regular.ttf"),
+    ),
+    (
+        GEIST_MONO_MEDIUM,
+        include_bytes!("../assets/fonts/GeistMono-Medium.ttf"),
+    ),
+];
+const JOST_SEMIBOLD: &str = "Jost SemiBold";
+const GEIST_REGULAR: &str = "Geist Regular";
+const GEIST_MEDIUM: &str = "Geist Medium";
+const GEIST_SEMIBOLD: &str = "Geist SemiBold";
+const GEIST_MONO_REGULAR: &str = "Geist Mono Regular";
+const GEIST_MONO_MEDIUM: &str = "Geist Mono Medium";
+
+/// The size and font of a text style. Body text is egui's proportional
+/// family and mono text its monospace family, both set to Geist, so plain
+/// egui widgets use them too.
 pub fn font(text: Text) -> FontId {
+    let named = |name: &str| FontFamily::Name(name.into());
     let (size, family) = match text {
-        Text::Display => (40.0, FontFamily::Proportional),
-        Text::Title => (22.0, FontFamily::Proportional),
-        Text::Heading => (15.0, FontFamily::Proportional),
+        Text::Display => (40.0, named(JOST_SEMIBOLD)),
+        Text::Title => (22.0, named(JOST_SEMIBOLD)),
+        Text::Heading => (15.0, named(GEIST_SEMIBOLD)),
         Text::Body => (14.0, FontFamily::Proportional),
-        Text::Label => (12.0, FontFamily::Proportional),
+        Text::Label => (12.0, named(GEIST_MEDIUM)),
         Text::Mono => (12.0, FontFamily::Monospace),
-        Text::Wordmark => (18.0, FontFamily::Monospace),
+        Text::Wordmark => (18.0, named(GEIST_MONO_MEDIUM)),
     };
     FontId::new(size, family)
 }
@@ -104,11 +140,37 @@ pub fn install(ctx: &egui::Context) {
     });
 }
 
-/// The one place that loads fonts. The design system's fonts (Jost, Geist
-/// and Geist Mono) are not in the program yet, so egui's own fonts stand in
-/// for them.
+/// The one place that loads fonts. Each font of the design system is its
+/// own family, followed by egui's own fonts for the signs Geist and Jost do
+/// not have. egui's proportional family starts with Geist Regular and its
+/// monospace family with Geist Mono Regular.
 fn install_fonts(ctx: &egui::Context) {
-    ctx.set_fonts(egui::FontDefinitions::default());
+    let mut fonts = egui::FontDefinitions::default();
+    let fallback = fonts
+        .families
+        .get(&FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
+    for (name, bytes) in FONTS {
+        fonts.font_data.insert(
+            name.to_string(),
+            std::sync::Arc::new(egui::FontData::from_static(bytes)),
+        );
+        let mut family = vec![name.to_string()];
+        family.extend(fallback.iter().cloned());
+        fonts.families.insert(FontFamily::Name(name.into()), family);
+    }
+    for (family, first) in [
+        (FontFamily::Proportional, GEIST_REGULAR),
+        (FontFamily::Monospace, GEIST_MONO_REGULAR),
+    ] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .insert(0, first.to_string());
+    }
+    ctx.set_fonts(fonts);
 }
 
 fn visuals(v: &mut egui::Visuals) {
