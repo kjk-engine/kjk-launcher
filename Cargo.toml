@@ -5,7 +5,7 @@ edition = "2021"
 description = "Launcher for kjk that checks GitHub for new releases and installs them only when asked"
 license = "MIT"
 repository = "https://github.com/kjk-engine/kjk-launcher"
-authors = ["A community contributor", "The kjk project"]
+authors = ["dansan96", "The kjk project"]
 default-run = "kjk-launcher"
 
 [[bin]]

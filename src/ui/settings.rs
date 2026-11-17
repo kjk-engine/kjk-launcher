@@ -234,8 +234,5 @@ impl Ready {
             ui,
             "Steam then starts kjk through this launcher when you press Play on that game.",
         );
-        if !cfg!(windows) {
-            widgets::muted(ui, "This has only been checked on Windows.");
-        }
     }
 }
