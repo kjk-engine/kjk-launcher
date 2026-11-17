@@ -125,6 +125,22 @@ enum Notice {
     Error(String),
 }
 
+/// A game folder kjk is checking on a background thread.
+struct FolderCheck {
+    game: Game,
+    done: mpsc::Receiver<FolderChecked>,
+}
+
+/// What kjk said about a folder the player chose.
+enum FolderChecked {
+    /// kjk found the game there; whether the folder could be saved.
+    Found(Result<(), String>),
+    /// kjk did not find the game there, and why.
+    Refused(String),
+    /// This version of kjk cannot check a folder.
+    CannotCheck,
+}
+
 struct Ready {
     paths: Paths,
     config: Config,
@@ -163,6 +179,8 @@ struct Ready {
     show_details: bool,
     /// Why a folder the player chose is not usable, by game.
     folder_problems: HashMap<&'static str, String>,
+    /// The folder check in progress.
+    folder_check: Option<FolderCheck>,
     /// Opens the version menu on the first frame (`KJK_LAUNCHER_MENU`).
     open_menu: bool,
     shot: Shot,
@@ -207,6 +225,7 @@ impl App {
                     ffmpeg_dialog: shot::ffmpeg_open(),
                     show_details: false,
                     folder_problems: HashMap::new(),
+                    folder_check: None,
                     open_menu: shot::menu_open(),
                     shot: Shot::from_env(),
                 };
@@ -426,6 +445,7 @@ impl Ready {
     }
 
     fn poll(&mut self) {
+        self.poll_folder_check();
         if let Some(rx) = &self.checking {
             if let Ok((releases, launcher)) = rx.try_recv() {
                 self.checking = None;
@@ -500,10 +520,18 @@ impl Ready {
         self.refresh();
     }
 
+    /// Whether anything runs on a background thread.
+    fn busy(&self) -> bool {
+        self.job.is_some()
+            || self.checking.is_some()
+            || self.asking.is_some()
+            || self.folder_check.is_some()
+    }
+
     fn update(&mut self, ui: &mut egui::Ui) {
         let ctx = &ui.ctx().clone();
         self.poll();
-        if self.job.is_some() || self.checking.is_some() || self.asking.is_some() {
+        if self.busy() {
             ctx.request_repaint_after(Duration::from_millis(100));
         } else {
             // The footer counts the minutes since the last check.
@@ -555,7 +583,7 @@ impl Ready {
 
         self.confirm_window(ctx);
         frame::edges(ctx);
-        let busy = self.job.is_some() || self.checking.is_some() || self.asking.is_some();
+        let busy = self.busy();
         self.shot.frame(ctx, busy);
     }
 
@@ -643,7 +671,7 @@ impl Ready {
             return;
         };
         let update = ui.add_enabled_ui(self.job.is_none(), |ui| {
-            widgets::secondary_button(ui, "Update launcher")
+            widgets::compact_button(ui, "Update launcher")
         });
         if update.inner.clicked() {
             self.start_self_update(ctx, offer.clone());
@@ -735,7 +763,7 @@ impl Ready {
             },
             |ui| {
                 if job.cancellable {
-                    cancel = widgets::secondary_button(ui, "Cancel").clicked();
+                    cancel = widgets::compact_button(ui, "Cancel").clicked();
                 }
             },
         );
@@ -757,11 +785,11 @@ impl Ready {
                 widgets::muted(ui, "Each version is in its own folder inside this one.");
             },
             |ui| {
-                if widgets::secondary_button(ui, "Open folder").clicked() {
+                if widgets::compact_button(ui, "Open folder").clicked() {
                     launch::open_folder(&self.paths.versions);
                 }
                 let change = ui.add_enabled_ui(self.job.is_none(), |ui| {
-                    widgets::secondary_button(ui, "Change folder")
+                    widgets::compact_button(ui, "Change folder")
                 });
                 if change.inner.clicked() {
                     self.pick_install_dir();
