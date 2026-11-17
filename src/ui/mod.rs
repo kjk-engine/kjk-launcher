@@ -87,8 +87,9 @@ enum Outcome {
         to: PathBuf,
         moved: Moved,
     },
-    /// kjk's folder moved to `to`, or why it did not.
+    /// kjk's folder moved from `from` to `to`, or why it did not.
     KjkMoved {
+        from: PathBuf,
         to: PathBuf,
         result: Result<(), String>,
     },
@@ -490,7 +491,7 @@ impl Ready {
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let result = folders::move_kjk_folder(&from, &to, &default, &worker);
-            let _ = tx.send(Outcome::KjkMoved { to, result });
+            let _ = tx.send(Outcome::KjkMoved { from, to, result });
             ctx.request_repaint();
         });
         self.job = Some(Job {
@@ -586,7 +587,18 @@ impl Ready {
         let Some(outcome) = finished else { return };
         self.job = None;
         match outcome {
-            Outcome::KjkMoved { to, result } => {
+            Outcome::KjkMoved { from, to, result } => {
+                // An install folder inside kjk's folder moved with it.
+                if result.is_ok() {
+                    if let Some(followed) = self
+                        .config
+                        .install_dir
+                        .as_deref()
+                        .and_then(|dir| folders::follow_move(dir, &from, &to))
+                    {
+                        self.config.install_dir = Some(followed);
+                    }
+                }
                 self.notice = Some(match result {
                     Ok(()) => Notice::Info(format!("The kjk folder is now {}.", to.display())),
                     Err(e) => Notice::Error(format!("The kjk folder could not be moved. {e}")),
