@@ -19,7 +19,7 @@ use crate::shot::{self, Shot};
 use crate::theme::{self, Text};
 use crate::versions as release_menu;
 use crate::widgets::{self, Status};
-use eframe::egui::{self, RichText};
+use eframe::egui;
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -201,8 +201,8 @@ impl eframe::App for App {
         match self {
             App::Broken(error) => {
                 egui::CentralPanel::default().show(ui, |ui| {
-                    ui.heading("The launcher cannot start");
-                    ui.label(error.as_str());
+                    widgets::page_title(ui, "The launcher cannot start");
+                    widgets::muted(ui, error.as_str());
                 });
             }
             App::Ready(ready) => ready.update(ui),
@@ -571,48 +571,64 @@ impl Ready {
         }
     }
 
+    /// The download or move in progress: what it is doing, a progress
+    /// line and, for a download, a Cancel button.
     fn progress(&mut self, ui: &mut egui::Ui) {
         let Some(job) = &self.job else { return };
         let (stage, done, total) = job.progress.snapshot();
-        ui.group(|ui| {
-            ui.set_width(ui.available_width());
-            ui.label(format!("{}: {stage}", job.title));
-            let fraction = if total > 0 {
-                done as f32 / total as f32
-            } else {
-                0.0
-            };
-            ui.add(egui::ProgressBar::new(fraction).text(format!(
-                "{:.1} / {:.1} MB",
-                done as f64 / 1e6,
-                total as f64 / 1e6
-            )));
-            if job.cancellable && ui.button("Cancel").clicked() {
-                job.progress.cancel.store(true, Ordering::Relaxed);
-            }
-        });
-        ui.add_space(8.0);
+        let fraction = if total > 0 {
+            done as f32 / total as f32
+        } else {
+            0.0
+        };
+        let mut cancel = false;
+        widgets::row(
+            ui,
+            |ui| {
+                ui.label(widgets::text(&job.title, Text::Heading, theme::INK));
+                widgets::muted(
+                    ui,
+                    format!(
+                        "{stage}. {:.1} of {:.1} MB.",
+                        done as f64 / 1e6,
+                        total as f64 / 1e6
+                    ),
+                );
+            },
+            |ui| {
+                if job.cancellable {
+                    cancel = widgets::secondary_button(ui, "Cancel").clicked();
+                }
+            },
+        );
+        widgets::progress(ui, fraction);
+        if cancel {
+            job.progress.cancel.store(true, Ordering::Relaxed);
+        }
+        ui.add_space(theme::SPACE_6);
     }
 
     /// The install folder, with buttons to change and open it.
     fn install_folder(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Install folder:");
-            ui.label(widgets::text(
-                self.paths.versions.display().to_string(),
-                Text::Mono,
-                theme::INK_MUTED,
-            ));
-            if ui
-                .add_enabled(self.job.is_none(), egui::Button::new("Change…"))
-                .on_hover_text("Each version goes in its own subfolder, such as 0.19.0")
-                .clicked()
-            {
-                self.pick_install_dir();
-            }
-            if ui.button("Open").clicked() {
-                launch::open_folder(&self.paths.versions);
-            }
-        });
+        let folder = self.paths.versions.display().to_string();
+        widgets::row(
+            ui,
+            |ui| {
+                ui.label(widgets::text("Install folder", Text::Heading, theme::INK));
+                ui.label(widgets::text(folder, Text::Mono, theme::INK_MUTED));
+                widgets::muted(ui, "Each version is in its own folder inside this one.");
+            },
+            |ui| {
+                if widgets::secondary_button(ui, "Open folder").clicked() {
+                    launch::open_folder(&self.paths.versions);
+                }
+                let change = ui.add_enabled_ui(self.job.is_none(), |ui| {
+                    widgets::secondary_button(ui, "Change folder")
+                });
+                if change.inner.clicked() {
+                    self.pick_install_dir();
+                }
+            },
+        );
     }
 }

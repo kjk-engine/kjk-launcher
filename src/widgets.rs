@@ -206,3 +206,25 @@ pub fn menu_row(ui: &mut egui::Ui, left: &str, style: Text, state: &str) -> egui
     );
     response
 }
+
+/// A page's title in the title style.
+pub fn page_title(ui: &mut egui::Ui, words: &str) {
+    ui.label(text(words, Text::Title, theme::INK));
+    ui.add_space(theme::SPACE_4);
+}
+
+/// A sentence in the body style, in `INK_MUTED`.
+pub fn muted(ui: &mut egui::Ui, words: impl Into<String>) {
+    ui.label(text(words, Text::Body, theme::INK_MUTED));
+}
+
+/// A row of a list: `left` stacks its lines on the left, and `right` adds
+/// its controls from the right end, the first one rightmost.
+pub fn row(ui: &mut egui::Ui, left: impl FnOnce(&mut egui::Ui), right: impl FnOnce(&mut egui::Ui)) {
+    ui.add_space(theme::SPACE_3);
+    ui.horizontal(|ui| {
+        ui.vertical(left);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right);
+    });
+    ui.add_space(theme::SPACE_3);
+}
