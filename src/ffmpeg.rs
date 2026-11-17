@@ -35,15 +35,61 @@ fn program(name: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// The command that installs ffmpeg on this system.
-pub fn install_command() -> &'static str {
+/// How the "Install ffmpeg" dialog tells the player to install ffmpeg.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hint {
+    /// A command to run in a terminal.
+    Command(&'static str),
+    /// SteamOS: no command, a sentence and the download page.
+    SteamOs,
+    /// A system the launcher does not know: only the download page.
+    LinkOnly,
+}
+
+/// The hint for this system. On Linux it depends on `/etc/os-release`.
+pub fn install_hint() -> Hint {
     if cfg!(windows) {
-        "winget install Gyan.FFmpeg"
+        Hint::Command("winget install Gyan.FFmpeg")
     } else if cfg!(target_os = "macos") {
-        "brew install ffmpeg"
+        Hint::Command("brew install ffmpeg")
     } else {
-        "sudo apt install ffmpeg"
+        linux_hint(&std::fs::read_to_string("/etc/os-release").unwrap_or_default())
     }
+}
+
+/// The hint for the Linux system that `os_release` (the text of
+/// `/etc/os-release`) describes. Its `ID` is looked at first, then each
+/// name in `ID_LIKE`. SteamOS says it is like Arch, but it has no command.
+pub fn linux_hint(os_release: &str) -> Hint {
+    let field = |name: &str| {
+        os_release
+            .lines()
+            .find_map(|line| line.trim().strip_prefix(name)?.strip_prefix('='))
+            .map(|value| {
+                value
+                    .trim()
+                    .trim_matches(|c| c == '"' || c == '\'')
+                    .to_ascii_lowercase()
+            })
+            .unwrap_or_default()
+    };
+    let id = field("ID");
+    if id == "steamos" {
+        return Hint::SteamOs;
+    }
+    let like = field("ID_LIKE");
+    let names = std::iter::once(id.as_str()).chain(like.split_whitespace());
+    for name in names {
+        let command = match name {
+            "debian" | "ubuntu" => "sudo apt install ffmpeg",
+            "fedora" => "sudo dnf install ffmpeg",
+            "arch" => "sudo pacman -S ffmpeg",
+            _ if name.contains("suse") || name == "sles" => "sudo zypper install ffmpeg",
+            _ => continue,
+        };
+        return Hint::Command(command);
+    }
+    Hint::LinkOnly
 }
 
 /// Where to read about other ways to install ffmpeg.
@@ -54,14 +100,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn install_command_for_this_system() {
-        let expected = if cfg!(windows) {
-            "winget install Gyan.FFmpeg"
+    fn hint_for_each_linux_system() {
+        let cases = [
+            ("ID=debian", Hint::Command("sudo apt install ffmpeg")),
+            (
+                "ID=ubuntu\nID_LIKE=debian",
+                Hint::Command("sudo apt install ffmpeg"),
+            ),
+            (
+                "NAME=\"Linux Mint\"\nID=linuxmint\nID_LIKE=\"ubuntu debian\"",
+                Hint::Command("sudo apt install ffmpeg"),
+            ),
+            ("ID=fedora", Hint::Command("sudo dnf install ffmpeg")),
+            (
+                "ID=nobara\nID_LIKE=\"rhel centos fedora\"",
+                Hint::Command("sudo dnf install ffmpeg"),
+            ),
+            ("ID=arch", Hint::Command("sudo pacman -S ffmpeg")),
+            (
+                "ID=endeavouros\nID_LIKE=arch",
+                Hint::Command("sudo pacman -S ffmpeg"),
+            ),
+            ("ID=steamos\nID_LIKE=arch", Hint::SteamOs),
+            ("ID=\"steamos\"", Hint::SteamOs),
+            (
+                "ID=\"opensuse-tumbleweed\"\nID_LIKE=\"opensuse suse\"",
+                Hint::Command("sudo zypper install ffmpeg"),
+            ),
+            ("ID=nixos", Hint::LinkOnly),
+            ("", Hint::LinkOnly),
+        ];
+        for (os_release, expected) in cases {
+            assert_eq!(linux_hint(os_release), expected, "{os_release}");
+        }
+    }
+
+    #[test]
+    fn hint_for_this_system() {
+        if cfg!(windows) {
+            assert_eq!(install_hint(), Hint::Command("winget install Gyan.FFmpeg"));
         } else if cfg!(target_os = "macos") {
-            "brew install ffmpeg"
-        } else {
-            "sudo apt install ffmpeg"
-        };
-        assert_eq!(install_command(), expected);
+            assert_eq!(install_hint(), Hint::Command("brew install ffmpeg"));
+        }
     }
 }
