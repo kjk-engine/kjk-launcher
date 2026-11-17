@@ -173,7 +173,7 @@ impl Ready {
                 }
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if widgets::secondary_button(ui, "How to install").clicked() {
+                if widgets::compact_button(ui, "How to install").clicked() {
                     self.ffmpeg_dialog = true;
                 }
                 ui.add_space(theme::SPACE_4);
@@ -231,20 +231,32 @@ impl Ready {
                 } else {
                     "Choose folder"
                 };
-                if widgets::secondary_button(ui, label).clicked() {
-                    self.choose_game_folder(current, game);
+                let checking = self.folder_check.as_ref().map(|check| check.game);
+                let pick =
+                    ui.add_enabled_ui(checking.is_none(), |ui| widgets::compact_button(ui, label));
+                if pick.inner.clicked() {
+                    self.choose_game_folder(ui.ctx(), current, game);
                 }
                 ui.add_space(theme::SPACE_4);
-                let (dot, word) = kjk_report::status_word(status);
-                widgets::status(ui, dot, word);
+                if checking == Some(game) {
+                    ui.label(widgets::text("Checking", Text::Label, theme::INK_MUTED));
+                } else {
+                    let (dot, word) = kjk_report::status_word(status);
+                    widgets::status(ui, dot, word);
+                }
             });
         });
         ui.add_space(theme::SPACE_3);
     }
 
-    /// Asks for a folder, has kjk check it, and saves it in kjk's settings
-    /// only when kjk finds the game there.
-    pub(super) fn choose_game_folder(&mut self, current: &Installed, game: Game) {
+    /// Asks for a folder. kjk checks it on a background thread, and the
+    /// folder is saved in kjk's settings only when kjk finds the game there.
+    pub(super) fn choose_game_folder(
+        &mut self,
+        ctx: &egui::Context,
+        current: &Installed,
+        game: Game,
+    ) {
         let Some(folder) = rfd::FileDialog::new()
             .set_title(format!("Choose the {} folder", game.name()))
             .pick_folder()
@@ -252,24 +264,50 @@ impl Ready {
             return;
         };
         let kjk = install::game_binary(&current.dir);
-        match kjk_report::check(&kjk, game, &folder) {
-            Some(GameStatus::Found { .. }) => {
+        let settings = self.paths.settings();
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let checked = match kjk_report::check(&kjk, game, &folder) {
+                Some(GameStatus::Found { .. }) => FolderChecked::Found(
+                    settings
+                        .ok_or_else(|| {
+                            "The launcher could not find kjk's settings file.".to_string()
+                        })
+                        .and_then(|file| kjk_settings::set_install(&file, game, &folder)),
+                ),
+                Some(GameStatus::Refused { why, .. }) => FolderChecked::Refused(why),
+                _ => FolderChecked::CannotCheck,
+            };
+            let _ = tx.send(checked);
+            ctx.request_repaint();
+        });
+        self.folder_check = Some(FolderCheck { game, done: rx });
+    }
+
+    /// Takes the answer of a folder check, when it has come.
+    pub(super) fn poll_folder_check(&mut self) {
+        let Some(check) = &self.folder_check else {
+            return;
+        };
+        let Ok(checked) = check.done.try_recv() else {
+            return;
+        };
+        let game = check.game;
+        self.folder_check = None;
+        match checked {
+            FolderChecked::Found(saved) => {
                 self.folder_problems.remove(game.key());
-                let saved = self
-                    .paths
-                    .settings()
-                    .ok_or_else(|| "The launcher could not find kjk's settings file.".to_string())
-                    .and_then(|file| kjk_settings::set_install(&file, game, &folder));
                 self.notice = Some(match saved {
                     Ok(()) => Notice::Info(format!("The {} folder is saved.", game.name())),
                     Err(e) => Notice::Error(e),
                 });
                 self.games = Games::Stale;
             }
-            Some(GameStatus::Refused { why, .. }) => {
+            FolderChecked::Refused(why) => {
                 self.folder_problems.insert(game.key(), why);
             }
-            _ => {
+            FolderChecked::CannotCheck => {
                 self.notice = Some(Notice::Error(
                     "This version of kjk cannot check a folder.".to_string(),
                 ));
@@ -322,7 +360,12 @@ impl Ready {
     /// pre-releases.
     pub(super) fn version_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, current: &str) {
         let button = widgets::version_title(ui, &release_menu::title(current));
-        let menu = release_menu::menu(&self.releases, &self.installed, Some(current));
+        let menu = release_menu::menu(
+            &self.releases,
+            &self.installed,
+            Some(current),
+            self.config.prereleases,
+        );
         let mut picked = None;
         let mut show_all = false;
         let open = std::mem::take(&mut self.open_menu).then_some(egui::SetOpenCommand::Bool(true));
