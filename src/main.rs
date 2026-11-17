@@ -8,6 +8,9 @@ use kjk_launcher::args::{self, Mode};
 /// kjk at once for Steam's launch options, and opens the window only when
 /// the player is needed.
 fn main() -> eframe::Result {
+    if let Some(home) = kjk_launcher::selfupdate::home() {
+        kjk_launcher::selfupdate::clean(&home);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args::parse(&args) {
         Mode::Window { pass } => kjk_launcher::ui::run(pass, None),

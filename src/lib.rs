@@ -14,6 +14,7 @@ pub mod kjk_report;
 pub mod kjk_settings;
 pub mod launch;
 pub mod run;
+pub mod selfupdate;
 pub mod shot;
 pub mod theme;
 pub mod ui;

@@ -198,7 +198,15 @@ impl Progress {
     }
 }
 
-pub fn install(paths: &Paths, release: &Release, progress: &Progress) -> Result<Installed, String> {
+/// Downloads the package of `release` for this computer into `downloads`,
+/// checks it against the release's `SHA256SUMS`, and unpacks it into
+/// `into`, a fresh folder. The download is deleted afterwards.
+pub fn fetch_package(
+    release: &Release,
+    downloads: &Path,
+    into: &Path,
+    progress: &Progress,
+) -> Result<(), String> {
     let package = release
         .package()
         .ok_or("this release has no package for this computer")?;
@@ -212,8 +220,9 @@ pub fn install(paths: &Paths, release: &Release, progress: &Progress) -> Result<
         .ok_or_else(|| format!("SHA256SUMS does not list {}", package.name))?;
 
     progress.stage(format!("Downloading {}", package.name));
-    let archive = paths.downloads.join(&package.name);
-    let part = paths.downloads.join(format!("{}.part", package.name));
+    fs::create_dir_all(downloads).map_err(|e| format!("{}: {e}", downloads.display()))?;
+    let archive = downloads.join(&package.name);
+    let part = downloads.join(format!("{}.part", package.name));
     let actual = download(&package.browser_download_url, &part, package.size, progress);
     let actual = match actual {
         Ok(hash) => hash,
@@ -231,19 +240,26 @@ pub fn install(paths: &Paths, release: &Release, progress: &Progress) -> Result<
     fs::rename(&part, &archive).map_err(|e| format!("{}: {e}", archive.display()))?;
 
     progress.stage("Unpacking");
+    let unpacked = (|| {
+        if into.exists() {
+            fs::remove_dir_all(into).map_err(|e| format!("{}: {e}", into.display()))?;
+        }
+        fs::create_dir_all(into).map_err(|e| format!("{}: {e}", into.display()))?;
+        if package.name.ends_with(".zip") {
+            unzip(&archive, into)
+        } else {
+            untar_gz(&archive, into)
+        }
+    })();
+    let _ = fs::remove_file(&archive);
+    unpacked
+}
+
+pub fn install(paths: &Paths, release: &Release, progress: &Progress) -> Result<Installed, String> {
     let name = folder_for(&release.tag_name);
     let staging = paths.versions.join(format!("{name}{PARTIAL}"));
     let target = paths.versions.join(&name);
-    let unpacked = (|| {
-        if staging.exists() {
-            fs::remove_dir_all(&staging).map_err(|e| format!("{}: {e}", staging.display()))?;
-        }
-        fs::create_dir_all(&staging).map_err(|e| format!("{}: {e}", staging.display()))?;
-        if package.name.ends_with(".zip") {
-            unzip(&archive, &staging)?;
-        } else {
-            untar_gz(&archive, &staging)?;
-        }
+    let unpacked = fetch_package(release, &paths.downloads, &staging, progress).and_then(|()| {
         if !game_exe(&staging).exists() {
             return Err("the package has no kjk program in it".to_string());
         }
@@ -267,11 +283,10 @@ pub fn install(paths: &Paths, release: &Release, progress: &Progress) -> Result<
         }
         fs::rename(&staging, &target).map_err(|e| format!("{}: {e}", target.display()))?;
         Ok(meta)
-    })();
+    });
     if unpacked.is_err() {
         let _ = fs::remove_dir_all(&staging);
     }
-    let _ = fs::remove_file(&archive);
     progress.stage("Installed");
     unpacked
 }

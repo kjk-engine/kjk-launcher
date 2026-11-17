@@ -87,6 +87,11 @@ enum Outcome {
         to: PathBuf,
         moved: Moved,
     },
+    /// The launcher's update failed (on success the new launcher runs and
+    /// this one has closed).
+    SelfUpdateFailed {
+        link: String,
+    },
 }
 
 struct Job {
@@ -127,7 +132,12 @@ struct Ready {
     sizes: HashMap<PathBuf, u64>,
     releases: Vec<Release>,
     backups: Vec<Backup>,
-    checking: Option<mpsc::Receiver<Releases>>,
+    /// The check in progress: kjk's releases and the launcher's own.
+    checking: Option<mpsc::Receiver<(Releases, Releases)>>,
+    /// The launcher's own releases.
+    launcher_releases: Vec<Release>,
+    /// Why the launcher could not update itself, with the release page.
+    self_update_failed: Option<(String, String)>,
     online: Option<bool>,
     /// When GitHub last answered a check.
     checked_at: Option<std::time::Instant>,
@@ -169,6 +179,7 @@ impl App {
         frame::start(ctx);
         match crate::config::open() {
             Ok((paths, config)) => {
+                let paths_launcher_cache = paths.launcher_cache_file.clone();
                 install::clean_leftovers(&paths);
                 let mut ready = Ready {
                     releases: github::cached(&paths),
@@ -178,6 +189,8 @@ impl App {
                     paths,
                     config,
                     checking: None,
+                    launcher_releases: github::cached_in(&paths_launcher_cache),
+                    self_update_failed: None,
                     online: None,
                     checked_at: None,
                     problem: None,
@@ -242,7 +255,9 @@ impl Ready {
         let paths = self.paths.clone();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(github::fetch(&paths));
+            let launcher =
+                github::fetch_from(crate::config::LAUNCHER_REPO, &paths.launcher_cache_file);
+            let _ = tx.send((github::fetch(&paths), launcher));
             ctx.request_repaint();
         });
         self.checking = Some(rx);
@@ -412,8 +427,11 @@ impl Ready {
 
     fn poll(&mut self) {
         if let Some(rx) = &self.checking {
-            if let Ok(releases) = rx.try_recv() {
+            if let Ok((releases, launcher)) = rx.try_recv() {
                 self.checking = None;
+                if !launcher.list.is_empty() {
+                    self.launcher_releases = launcher.list;
+                }
                 self.online = Some(releases.online);
                 if releases.online {
                     self.checked_at = Some(std::time::Instant::now());
@@ -437,6 +455,12 @@ impl Ready {
         let Some(outcome) = finished else { return };
         self.job = None;
         match outcome {
+            Outcome::SelfUpdateFailed { link } => {
+                self.self_update_failed = Some((
+                    "The launcher could not update itself. Download the new version from the release page.".to_string(),
+                    link,
+                ));
+            }
             Outcome::Installed {
                 make_current,
                 result: Ok(installed),
@@ -510,7 +534,14 @@ impl Ready {
             .frame(bar)
             .resizable(false)
             .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| self.status_line(ui));
+                let size = egui::vec2(ui.available_width(), theme::WINDOW_BUTTON.y);
+                let layout = egui::Layout::left_to_right(egui::Align::Center);
+                ui.allocate_ui_with_layout(size, layout, |ui| {
+                    self.status_line(ui);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        self.launcher_line(ui, ctx);
+                    });
+                });
             });
 
         egui::CentralPanel::default().frame(page).show(ui, |ui| {
@@ -570,6 +601,72 @@ impl Ready {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 frame::window_buttons(ui);
             });
+        });
+    }
+
+    /// The footer's right side: whether the launcher is up to date, or the
+    /// offer of a newer launcher.
+    fn launcher_line(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let version = env!("CARGO_PKG_VERSION");
+        if let Some((sentence, link)) = &self.self_update_failed {
+            if !link.is_empty() && widgets::text_button(ui, "Release page").clicked() {
+                ctx.open_url(egui::OpenUrl::new_tab(link));
+            }
+            widgets::status(ui, Status::Error, sentence);
+            return;
+        }
+        let offer = crate::selfupdate::offer(
+            &self.launcher_releases,
+            crate::selfupdate::prereleases_allowed(),
+        )
+        .cloned();
+        let Some(offer) = offer else {
+            ui.label(widgets::text(
+                format!("Launcher {version} is up to date."),
+                Text::Label,
+                theme::INK_MUTED,
+            ));
+            return;
+        };
+        let update = ui.add_enabled_ui(self.job.is_none(), |ui| {
+            widgets::secondary_button(ui, "Update launcher")
+        });
+        if update.inner.clicked() {
+            self.start_self_update(ctx, offer.clone());
+        }
+        let tag = offer.tag_name.trim_start_matches('v');
+        ui.label(widgets::text(
+            format!("Launcher {tag} is available."),
+            Text::Label,
+            theme::INK,
+        ));
+    }
+
+    /// Downloads the new launcher, swaps it in and starts it, then closes
+    /// this window. A failure leaves this launcher running.
+    fn start_self_update(&mut self, ctx: &egui::Context, release: Release) {
+        let progress = Arc::new(Progress::default());
+        let (tx, rx) = mpsc::channel();
+        let downloads = self.paths.downloads.clone();
+        let worker = progress.clone();
+        let ctx = ctx.clone();
+        let title = format!("Updating the launcher to {}", release.tag_name);
+        std::thread::spawn(move || {
+            match crate::selfupdate::update(&release, &downloads, &worker) {
+                Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                Err(e) => {
+                    eprintln!("launcher update: {e}");
+                    let link = release.html_url.clone();
+                    let _ = tx.send(Outcome::SelfUpdateFailed { link });
+                }
+            }
+            ctx.request_repaint();
+        });
+        self.job = Some(Job {
+            title,
+            progress,
+            cancellable: true,
+            done: rx,
         });
     }
 

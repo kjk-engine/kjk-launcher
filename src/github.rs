@@ -6,6 +6,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fs;
+use std::path::Path;
 use std::time::Duration;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -107,8 +108,8 @@ struct Cache {
     releases: Vec<Release>,
 }
 
-fn read_cache(paths: &Paths) -> Cache {
-    fs::read_to_string(&paths.cache_file)
+fn read_cache(file: &Path) -> Cache {
+    fs::read_to_string(file)
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default()
@@ -116,7 +117,12 @@ fn read_cache(paths: &Paths) -> Cache {
 
 /// The releases seen at the last check, without asking GitHub.
 pub fn cached(paths: &Paths) -> Vec<Release> {
-    read_cache(paths).releases
+    cached_in(&paths.cache_file)
+}
+
+/// The releases kept in `cache_file`, without asking GitHub.
+pub fn cached_in(cache_file: &Path) -> Vec<Release> {
+    read_cache(cache_file).releases
 }
 
 pub fn agent(timeout: Option<Duration>) -> ureq::Agent {
@@ -129,16 +135,22 @@ pub fn agent(timeout: Option<Duration>) -> ureq::Agent {
         .into()
 }
 
-/// Asks GitHub for the releases; falls back to the cache when offline.
+/// Asks GitHub for kjk's releases; falls back to the cache when offline.
 pub fn fetch(paths: &Paths) -> Releases {
-    let cache = read_cache(paths);
+    fetch_from(REPO, &paths.cache_file)
+}
+
+/// Asks GitHub for the releases of `repo`, cached in `cache_file`; falls
+/// back to the cache when offline.
+pub fn fetch_from(repo: &str, cache_file: &Path) -> Releases {
+    let cache = read_cache(cache_file);
     // KJK_LAUNCHER_OFFLINE=1 acts as if GitHub could not be reached, to
     // check the launcher without a network.
     let offline = std::env::var("KJK_LAUNCHER_OFFLINE").is_ok_and(|v| v == "1");
     let answer = if offline {
         Err("offline (KJK_LAUNCHER_OFFLINE)".to_string())
     } else {
-        fetch_network(&cache)
+        fetch_network(repo, &cache)
     };
     match answer {
         Ok(Some((etag, list))) => {
@@ -147,7 +159,7 @@ pub fn fetch(paths: &Paths) -> Releases {
                 releases: list,
             };
             if let Ok(json) = serde_json::to_vec(&fresh) {
-                let _ = write_atomic(&paths.cache_file, &json);
+                let _ = write_atomic(cache_file, &json);
             }
             Releases {
                 list: fresh.releases,
@@ -171,8 +183,8 @@ pub fn fetch(paths: &Paths) -> Releases {
 /// A fresh list and its ETag; `None` when GitHub says nothing changed.
 type Fresh = Option<(Option<String>, Vec<Release>)>;
 
-fn fetch_network(cache: &Cache) -> Result<Fresh, String> {
-    let url = format!("https://api.github.com/repos/{REPO}/releases?per_page=100");
+fn fetch_network(repo: &str, cache: &Cache) -> Result<Fresh, String> {
+    let url = format!("https://api.github.com/repos/{repo}/releases?per_page=100");
     let mut request = agent(Some(Duration::from_secs(10)))
         .get(&url)
         .header("Accept", "application/vnd.github+json")
