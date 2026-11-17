@@ -136,6 +136,7 @@ Point these variables at scratch folders before a test run:
 | `KJK_LAUNCHER_SHOT=<file.png>` | The launcher saves a picture of its window and closes. |
 | `KJK_LAUNCHER_TAB=versions` | The window opens on that page (play, versions or settings). |
 | `KJK_LAUNCHER_MENU=1` | The version menu is open. `ffmpeg` opens the "Install ffmpeg" dialog instead, `move:<folder>` the dialog that asks to move the kjk folder there, and `type:<text>` the dialog for a typed folder path with that text in it. |
+| `KJK_LAUNCHER_KEYS="tab tab enter"` | With `KJK_LAUNCHER_SHOT`, the launcher presses these keys one after another and saves a numbered picture after each. It knows tab, shift+tab, up, down, left, right, enter, space and escape. |
 | `KJK_LAUNCHER_TYPE_PATHS=1` | Every button that chooses a folder opens the launcher's dialog for a typed path instead of the system's folder dialog. |
 | `KJK_LAUNCHER_SCROLL=400` | The Versions or Settings page is scrolled down that many points. |
 | `KJK_LAUNCHER_FRAME=windows` | The window has the Windows frame on any system. |
