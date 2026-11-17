@@ -71,7 +71,7 @@ pub const DIALOG_WIDTH: f32 = 440.0;
 
 /// macOS: the room the three window buttons take at the left of the top
 /// bar.
-pub const MAC_BUTTONS: f32 = 80.0;
+pub const MAC_BUTTONS: f32 = 100.0;
 
 /// Windows: a window button's area (as high as the top bar), the size of its glyph, how far the
 /// two squares of the restore glyph are apart, and the edge zone that
