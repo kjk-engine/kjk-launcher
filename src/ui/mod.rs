@@ -32,13 +32,15 @@ use std::time::Duration;
 /// not start kjk at once. The window then hides after Play and the
 /// launcher exits when kjk does, so Steam counts the whole session.
 pub fn run(args: Vec<String>, steam: Option<String>) -> eframe::Result {
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("kjk launcher")
+        .with_inner_size(theme::WINDOW)
+        .with_min_inner_size(theme::WINDOW_MIN);
+    if let Some(icon) = theme::app_icon() {
+        viewport = viewport.with_icon(icon);
+    }
     let options = eframe::NativeOptions {
-        viewport: frame::viewport(
-            egui::ViewportBuilder::default()
-                .with_title("kjk launcher")
-                .with_inner_size(theme::WINDOW)
-                .with_min_inner_size(theme::WINDOW_MIN),
-        ),
+        viewport: frame::viewport(viewport),
         ..Default::default()
     };
     eframe::run_native(
@@ -717,8 +719,8 @@ impl Ready {
         let middle = whole.center().y;
         let mut x = whole.left() + bar.left;
         if let Some(mark) = &self.mark {
-            let side = egui::vec2(theme::MARK, theme::MARK);
-            let rect = egui::Rect::from_min_size(egui::pos2(x, middle - theme::MARK / 2.0), side);
+            let size = egui::vec2(theme::MARK * mark.aspect_ratio(), theme::MARK);
+            let rect = egui::Rect::from_min_size(egui::pos2(x, middle - theme::MARK / 2.0), size);
             egui::Image::new(mark).paint_at(ui, rect);
             x = rect.right() + theme::SPACE_2;
         }

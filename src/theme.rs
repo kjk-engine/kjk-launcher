@@ -40,8 +40,8 @@ pub const FOCUS_GAP: f32 = 2.0;
 pub const DOT: f32 = 8.0;
 /// The top bar's height, with its hairline at the bottom.
 pub const TOP_BAR: f32 = 48.0;
-/// The mark's side in the top bar.
-pub const MARK: f32 = 20.0;
+/// The mark's height in the top bar. Its width follows the picture.
+pub const MARK: f32 = 26.0;
 /// The progress line's height.
 pub const PROGRESS: f32 = 2.0;
 /// The chevron after the version title.
@@ -248,17 +248,32 @@ fn visuals(v: &mut egui::Visuals) {
     }
 }
 
-/// The kjk mark, as a texture for the top bar. The picture is more than
-/// three times the drawn size and is drawn with linear filtering between
-/// mipmaps, so it stays sharp when it is drawn small.
+/// The kjk mark, as a texture for the top bar: the band of kjk's logo
+/// (`docs/logo/kjk.svg` in kjk) without its square, cropped to the band and
+/// drawn at four times its height in the bar. It is drawn with linear
+/// filtering between mipmaps, so it stays sharp when it is drawn small.
 pub fn mark(ctx: &egui::Context) -> Option<egui::TextureHandle> {
-    let bytes = include_bytes!("../assets/kjk-mark.png");
-    let picture = image::load_from_memory_with_format(bytes, image::ImageFormat::Png).ok()?;
-    let rgba = picture.to_rgba8();
+    let rgba = picture(include_bytes!("../assets/kjk-bar-mark.png"))?;
     let size = [rgba.width() as usize, rgba.height() as usize];
     let image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
     let options = egui::TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear));
     Some(ctx.load_texture("kjk-mark", image, options))
+}
+
+/// The window's icon for the taskbar and the window list: kjk's logo.
+pub fn app_icon() -> Option<egui::IconData> {
+    let rgba = picture(include_bytes!("../assets/kjk-launcher-1024.png"))?;
+    Some(egui::IconData {
+        width: rgba.width(),
+        height: rgba.height(),
+        rgba: rgba.into_raw(),
+    })
+}
+
+fn picture(bytes: &[u8]) -> Option<image::RgbaImage> {
+    image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
+        .ok()
+        .map(|picture| picture.to_rgba8())
 }
 
 #[cfg(test)]
