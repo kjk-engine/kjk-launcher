@@ -5,7 +5,10 @@ use crate::config::{Config, Paths};
 use crate::github::{self, Release, Releases};
 use crate::install::{self, Installed, Moved, Progress};
 use crate::launch;
-use eframe::egui::{self, Color32, RichText};
+use crate::shot::{self, Shot};
+use crate::theme::{self, Text};
+use crate::widgets::{self, Status};
+use eframe::egui::{self, RichText};
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -13,17 +16,12 @@ use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
-const GREEN: Color32 = Color32::from_rgb(90, 170, 90);
-const RED: Color32 = Color32::from_rgb(220, 90, 80);
-const AMBER: Color32 = Color32::from_rgb(220, 160, 60);
-const BLUE: Color32 = Color32::from_rgb(120, 160, 220);
-
 pub fn run(args: Vec<String>) -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("kjk launcher")
-            .with_inner_size([900.0, 760.0])
-            .with_min_inner_size([560.0, 440.0]),
+            .with_inner_size(theme::WINDOW)
+            .with_min_inner_size(theme::WINDOW_MIN),
         ..Default::default()
     };
     eframe::run_native(
@@ -39,6 +37,28 @@ enum Tab {
     Versions,
     Backups,
     Settings,
+}
+
+impl Tab {
+    const ALL: [Tab; 4] = [Tab::Play, Tab::Versions, Tab::Backups, Tab::Settings];
+
+    fn name(self) -> &'static str {
+        match self {
+            Tab::Play => "Play",
+            Tab::Versions => "Versions",
+            Tab::Backups => "Backups",
+            Tab::Settings => "Settings",
+        }
+    }
+
+    /// The tab `KJK_LAUNCHER_TAB` names, or Play.
+    fn from_env() -> Tab {
+        let named = shot::tab();
+        Tab::ALL
+            .into_iter()
+            .find(|tab| named.as_deref() == Some(&tab.name().to_ascii_lowercase()))
+            .unwrap_or(Tab::Play)
+    }
 }
 
 enum Outcome {
@@ -88,6 +108,8 @@ struct Ready {
     tab: Tab,
     /// Passed to kjk when Play starts it.
     args: Vec<String>,
+    mark: Option<egui::TextureHandle>,
+    shot: Shot,
 }
 
 enum App {
@@ -97,6 +119,7 @@ enum App {
 
 impl App {
     fn new(ctx: &egui::Context, args: Vec<String>) -> App {
+        theme::install(ctx);
         match crate::config::open() {
             Ok((paths, config)) => {
                 install::clean_leftovers(&paths);
@@ -114,8 +137,10 @@ impl App {
                     not_now: false,
                     confirm: None,
                     notice: None,
-                    tab: Tab::Play,
+                    tab: Tab::from_env(),
                     args,
+                    mark: theme::mark(ctx),
+                    shot: Shot::from_env(),
                 };
                 ready.refresh();
                 if ready.config.check_on_start {
@@ -380,26 +405,29 @@ impl Ready {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
 
-        egui::Panel::top("tabs").show(ui, |ui| {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.heading("kjk launcher");
-                ui.separator();
-                ui.selectable_value(&mut self.tab, Tab::Play, "Play");
-                ui.selectable_value(&mut self.tab, Tab::Versions, "Versions");
-                ui.selectable_value(&mut self.tab, Tab::Backups, "Backups");
-                ui.selectable_value(&mut self.tab, Tab::Settings, "Settings");
+        let page = egui::Frame::new()
+            .fill(theme::GROUND)
+            .inner_margin(egui::Margin::same(theme::SPACE_8 as i8));
+        let bar = egui::Frame::new()
+            .fill(theme::GROUND)
+            .inner_margin(egui::Margin::symmetric(
+                theme::SPACE_8 as i8,
+                theme::SPACE_3 as i8,
+            ));
+
+        egui::Panel::top("tabs")
+            .frame(bar)
+            .resizable(false)
+            .show(ui, |ui| self.top_bar(ui));
+
+        egui::Panel::bottom("status")
+            .frame(bar)
+            .resizable(false)
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| self.status_line(ui));
             });
-            ui.add_space(4.0);
-        });
 
-        egui::Panel::bottom("status").show(ui, |ui| {
-            ui.add_space(2.0);
-            ui.horizontal_wrapped(|ui| self.status_line(ui));
-            ui.add_space(2.0);
-        });
-
-        egui::CentralPanel::default().show(ui, |ui| {
+        egui::CentralPanel::default().frame(page).show(ui, |ui| {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| match self.tab {
@@ -411,16 +439,47 @@ impl Ready {
         });
 
         self.confirm_window(ctx);
+        let busy = self.job.is_some() || self.checking.is_some();
+        self.shot.frame(ctx, busy);
+    }
+
+    /// The mark, the word "kjk-engine" and the four tab names. The open tab
+    /// is `INK` with a 1px `INK` underline, the others `INK_FAINT`.
+    fn top_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if let Some(mark) = &self.mark {
+                ui.add(
+                    egui::Image::new(mark).fit_to_exact_size(egui::vec2(theme::MARK, theme::MARK)),
+                );
+            }
+            ui.label(widgets::text("kjk-engine", Text::Wordmark, theme::INK));
+            ui.add_space(theme::SPACE_6);
+            ui.spacing_mut().item_spacing.x = theme::SPACE_6;
+            for tab in Tab::ALL {
+                let open = self.tab == tab;
+                let color = if open { theme::INK } else { theme::INK_FAINT };
+                let label = egui::Label::new(widgets::text(tab.name(), Text::Label, color))
+                    .sense(egui::Sense::click());
+                let response = widgets::add(ui, label);
+                if open {
+                    let under = response.rect.bottom() + theme::SPACE_1;
+                    ui.painter().hline(
+                        response.rect.x_range(),
+                        under,
+                        egui::Stroke::new(theme::HAIRLINE, theme::INK),
+                    );
+                }
+                if response.clicked() {
+                    self.tab = tab;
+                }
+            }
+        });
     }
 
     fn status_line(&mut self, ui: &mut egui::Ui) {
         match &self.notice {
-            Some(Notice::Info(text)) => {
-                ui.label(RichText::new(text).color(GREEN));
-            }
-            Some(Notice::Error(text)) => {
-                ui.label(RichText::new(text).color(RED));
-            }
+            Some(Notice::Info(text)) => widgets::status(ui, Status::Ok, text),
+            Some(Notice::Error(text)) => widgets::status(ui, Status::Error, text),
             None => {
                 if self.checking.is_some() {
                     ui.spinner();
@@ -466,7 +525,11 @@ impl Ready {
     fn install_folder(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             ui.label("Install folder:");
-            ui.label(RichText::new(self.paths.versions.display().to_string()).monospace());
+            ui.label(widgets::text(
+                self.paths.versions.display().to_string(),
+                Text::Mono,
+                theme::INK_MUTED,
+            ));
             if ui
                 .add_enabled(self.job.is_none(), egui::Button::new("Change…"))
                 .on_hover_text("Each version goes in its own subfolder, such as 0.19.0")
@@ -497,9 +560,11 @@ impl Ready {
             .cloned();
             match newest {
                 Some(release) => {
-                    let button = egui::Button::new(
-                        RichText::new(format!("Install {}", release.tag_name)).size(18.0),
-                    );
+                    let button = egui::Button::new(widgets::text(
+                        format!("Install {}", release.tag_name),
+                        Text::Heading,
+                        theme::INK,
+                    ));
                     if ui.add_enabled(self.job.is_none(), button).clicked() {
                         self.start_install(ctx, release, true);
                     }
@@ -525,10 +590,10 @@ impl Ready {
         ui.horizontal(|ui| {
             self.version_picker(ui, &current);
             if current.prerelease {
-                ui.label(RichText::new("pre-release").color(AMBER));
+                ui.label(widgets::text("Pre-release", Text::Label, theme::INK_MUTED));
             }
             if self.config.pinned {
-                ui.label(RichText::new("📌 pinned").color(BLUE));
+                ui.label(widgets::text("Pinned", Text::Label, theme::INK_MUTED));
             }
         });
         let released = if current.date().is_empty() {
@@ -541,9 +606,7 @@ impl Ready {
         ui.add_space(10.0);
 
         ui.horizontal(|ui| {
-            let play = egui::Button::new(RichText::new("▶  Play").size(24.0))
-                .min_size(egui::vec2(180.0, 52.0));
-            if ui.add(play).clicked() {
+            if widgets::primary_button(ui, "Play").clicked() {
                 match launch::play(&self.paths, &mut self.config, &self.args) {
                     Ok(_) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                     Err(e) => self.notice = Some(Notice::Error(e)),
@@ -576,7 +639,7 @@ impl Ready {
         egui::ComboBox::from_id_salt("version")
             .selected_text(
                 RichText::new(format!("kjk {}", current.tag))
-                    .size(18.0)
+                    .font(theme::font(Text::Heading))
                     .strong(),
             )
             .width(260.0)
@@ -627,14 +690,14 @@ impl Ready {
             if on_disk {
                 ui.label(
                     RichText::new(format!("kjk {} is already installed (you play {})", offer.tag_name, current.tag))
-                        .size(17.0)
+                        .font(theme::font(Text::Heading))
                         .strong(),
                 );
                 ui.label("Switch to it here or in the version list below; nothing needs to be downloaded.");
             } else {
                 ui.label(
                     RichText::new(format!("kjk {} is available (you have {})", offer.tag_name, current.tag))
-                        .size(17.0)
+                        .font(theme::font(Text::Heading))
                         .strong(),
                 );
                 ui.label(format!(
@@ -719,7 +782,7 @@ impl Ready {
                         .weak(),
                     );
                     if current.as_deref() == Some(version.tag.as_str()) {
-                        ui.label(RichText::new("plays now").color(GREEN));
+                        ui.label(widgets::text("Selected", Text::Label, theme::INK));
                     } else if ui.button("Use").clicked() {
                         self.choose(version.tag.clone());
                     }
@@ -753,7 +816,7 @@ impl Ready {
                 ui.label(RichText::new(&release.tag_name).strong());
                 ui.label(release.date());
                 if release.prerelease {
-                    ui.label(RichText::new("pre-release").color(AMBER));
+                    ui.label(widgets::text("Pre-release", Text::Label, theme::INK_MUTED));
                 }
                 if self.config.skipped.as_deref() == Some(release.tag_name.as_str()) {
                     ui.label(RichText::new("skipped").weak());

@@ -9,4 +9,7 @@ pub mod config;
 pub mod github;
 pub mod install;
 pub mod launch;
+pub mod shot;
+pub mod theme;
 pub mod ui;
+pub mod widgets;
