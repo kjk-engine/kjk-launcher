@@ -116,6 +116,77 @@ pub fn paint_centred(
     rect
 }
 
+/// Words in one column of a list line.
+#[derive(Clone, Copy)]
+pub struct Cell<'a> {
+    pub words: &'a str,
+    pub style: Text,
+    pub color: egui::Color32,
+}
+
+impl<'a> Cell<'a> {
+    pub fn new(words: &'a str, style: Text, color: egui::Color32) -> Cell<'a> {
+        Cell {
+            words,
+            style,
+            color,
+        }
+    }
+}
+
+/// Where each column of a list starts, so the columns line up down the
+/// list: each one `SPACE_8` after the widest words of the column before.
+pub fn columns(ui: &egui::Ui, rows: &[Vec<Cell>]) -> Vec<f32> {
+    let count = rows.iter().map(Vec::len).max().unwrap_or(0);
+    let mut starts = vec![0.0];
+    for column in 0..count.saturating_sub(1) {
+        let widest = rows
+            .iter()
+            .filter_map(|row| row.get(column))
+            .map(|cell| {
+                ui.painter()
+                    .layout_no_wrap(cell.words.to_string(), theme::font(cell.style), cell.color)
+                    .size()
+                    .x
+            })
+            .fold(0.0, f32::max);
+        starts.push(starts[column] + widest + theme::SPACE_8);
+    }
+    starts
+}
+
+/// One line of a list, `LIST_ROW` high: `cells` at the column `starts`,
+/// centred on the line, and `right` adding its controls from the right end.
+pub fn list_line(
+    ui: &mut egui::Ui,
+    starts: &[f32],
+    cells: &[Cell],
+    right: impl FnOnce(&mut egui::Ui),
+) -> egui::Response {
+    let width = ui.available_width();
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width, theme::LIST_ROW), egui::Sense::hover());
+    let middle = rect.center().y;
+    for (cell, start) in cells.iter().zip(starts) {
+        paint_centred(
+            ui,
+            cell.words,
+            cell.style,
+            cell.color,
+            rect.left() + start,
+            middle,
+        );
+    }
+    let layout = egui::Layout::right_to_left(egui::Align::Center);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect).layout(layout), right);
+    response
+}
+
+/// A state word at the right of a list line, such as "Selected".
+pub fn state_word(ui: &mut egui::Ui, word: &str, color: egui::Color32) {
+    ui.label(text(word, Text::Label, color));
+}
+
 /// A button that is only its words, such as "Show details".
 pub fn text_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     let button = egui::Button::new(text(label, Text::Label, theme::INK)).frame(false);
@@ -296,11 +367,16 @@ pub fn muted(ui: &mut egui::Ui, words: impl Into<String>) {
 }
 
 /// A row of a list: `left` stacks its lines on the left, and `right` adds
-/// its controls from the right end, the first one rightmost.
+/// its controls from the right end, the first one rightmost. The left
+/// lines wrap before the room kept for the controls.
 pub fn row(ui: &mut egui::Ui, left: impl FnOnce(&mut egui::Ui), right: impl FnOnce(&mut egui::Ui)) {
     ui.add_space(theme::SPACE_3);
     ui.horizontal(|ui| {
-        ui.vertical(left);
+        let width = (ui.available_width() - theme::ROW_CONTROLS).max(0.0);
+        ui.vertical(|ui| {
+            ui.set_max_width(width);
+            left(ui);
+        });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right);
     });
     ui.add_space(theme::SPACE_3);

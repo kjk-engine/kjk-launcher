@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// The backups listed before "Show all".
+const BACKUPS_SHOWN: usize = 5;
+
 /// The most installed versions the player can choose to keep.
 const KEEP_VERSIONS_MOST: usize = 20;
 
@@ -69,24 +72,11 @@ impl Ready {
         }
         ui.add_space(theme::SPACE_6);
 
-        self.steam_section(ui);
+        self.backups_section(ui);
         ui.add_space(theme::SPACE_6);
-
-        widgets::section_label(ui, "Folders");
-        widgets::hairline(ui);
-        self.install_folder(ui);
-        widgets::hairline(ui);
-        ui.add_space(theme::SPACE_3);
-        ui.horizontal(|ui| {
-            if widgets::secondary_button(ui, "Open the launcher's folder").clicked() {
-                launch::open_folder(&self.paths.root);
-            }
-            if let Some(dir) = self.paths.kjk_data.clone() {
-                if widgets::secondary_button(ui, "Open kjk's folder").clicked() {
-                    launch::open_folder(&dir);
-                }
-            }
-        });
+        self.folders_section(ui);
+        ui.add_space(theme::SPACE_6);
+        self.steam_section(ui);
         ui.add_space(theme::SPACE_6);
         widgets::muted(
             ui,
@@ -96,6 +86,107 @@ impl Ready {
                 crate::config::REPO
             ),
         );
+    }
+
+    /// The "Backups" section: a line per backup, newest first, the five
+    /// newest unless all are shown, and the buttons to back up and to open
+    /// the folder.
+    fn backups_section(&mut self, ui: &mut egui::Ui) {
+        widgets::section_label(ui, "Backups");
+        widgets::muted(
+            ui,
+            "The launcher backs up the saves and the settings before a version starts for the first time.",
+        );
+        ui.add_space(theme::SPACE_2);
+        let shown = if self.show_all_backups {
+            self.backups.len()
+        } else {
+            BACKUPS_SHOWN
+        };
+        let words: Vec<(PathBuf, [String; 3])> = self
+            .backups
+            .iter()
+            .take(shown)
+            .map(|b| {
+                let (when, why) = backup::describe(&b.name);
+                (b.path.clone(), [when, why, megabytes(b.size)])
+            })
+            .collect();
+        let cells: Vec<Vec<widgets::Cell>> = words
+            .iter()
+            .map(|(_, line)| {
+                line.iter()
+                    .enumerate()
+                    .map(|(column, words)| match column {
+                        0 => widgets::Cell::new(words, Text::Body, theme::INK),
+                        _ => widgets::Cell::new(words, Text::Body, theme::INK_MUTED),
+                    })
+                    .collect()
+            })
+            .collect();
+        let starts = widgets::columns(ui, &cells);
+        for ((path, _), line) in words.iter().zip(&cells) {
+            widgets::hairline(ui);
+            widgets::list_line(ui, &starts, line, |ui| {
+                if widgets::compact_button(ui, "Restore").clicked() {
+                    self.confirm = Some(Confirm::Restore(path.clone()));
+                }
+            });
+        }
+        if !words.is_empty() {
+            widgets::hairline(ui);
+        }
+        if self.backups.len() > BACKUPS_SHOWN && !self.show_all_backups {
+            ui.add_space(theme::SPACE_1);
+            if widgets::text_button(ui, "Show all").clicked() {
+                self.show_all_backups = true;
+            }
+        }
+        ui.add_space(theme::SPACE_2);
+        widgets::line(ui, |ui| {
+            if widgets::compact_button(ui, "Back up now").clicked() {
+                self.notice = Some(match backup::create(&self.paths, "manual") {
+                    Ok(Some(_)) => Notice::Info("The saves and the settings are backed up.".into()),
+                    Ok(None) => Notice::Info("kjk has no saves or settings yet.".into()),
+                    Err(e) => Notice::Error(e),
+                });
+                self.backups = backup::list(&self.paths);
+            }
+            if widgets::compact_button(ui, "Open folder").clicked() {
+                launch::open_folder(&self.paths.backups);
+            }
+        });
+    }
+
+    /// The "Folders" section: kjk's folder and the install folder.
+    fn folders_section(&mut self, ui: &mut egui::Ui) {
+        widgets::section_label(ui, "Folders");
+        if let Some(dir) = self.paths.kjk_data.clone() {
+            widgets::hairline(ui);
+            widgets::row(
+                ui,
+                |ui| {
+                    ui.label(widgets::text("kjk folder", Text::Heading, theme::INK));
+                    ui.label(widgets::text(
+                        dir.display().to_string(),
+                        Text::Mono,
+                        theme::INK_MUTED,
+                    ));
+                    widgets::muted(
+                        ui,
+                        "Saves, settings, logs, backups and installed versions are in this folder.",
+                    );
+                },
+                |ui| {
+                    if widgets::compact_button(ui, "Open").clicked() {
+                        launch::open_folder(&dir);
+                    }
+                },
+            );
+        }
+        widgets::hairline(ui);
+        self.install_folder(ui);
+        widgets::hairline(ui);
     }
 
     /// The "Steam play time" section: the line for Steam's launch options.

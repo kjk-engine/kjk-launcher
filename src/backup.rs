@@ -112,6 +112,28 @@ pub fn list(paths: &Paths) -> Vec<Backup> {
     found
 }
 
+/// When a backup was made and what it was made before, from its name
+/// (`2026-11-17_12-00-00_before-v0.19.0.zip`): "17 November 2026, 12:00"
+/// and "Before 0.19.0". A name in another form shows as it is.
+pub fn describe(name: &str) -> (String, String) {
+    let stem = name.strip_suffix(".zip").unwrap_or(name);
+    let when = stem
+        .get(..19)
+        .and_then(|stamp| chrono::NaiveDateTime::parse_from_str(stamp, "%Y-%m-%d_%H-%M-%S").ok());
+    let (Some(when), Some(label)) = (when, stem.get(20..)) else {
+        return (name.to_string(), String::new());
+    };
+    let why = match label {
+        "manual" => "Made by hand".to_string(),
+        "before-restore" => "Before a restore".to_string(),
+        other => match other.strip_prefix("before-") {
+            Some(tag) => format!("Before {}", crate::versions::number(tag)),
+            None => other.to_string(),
+        },
+    };
+    (when.format("%-d %B %Y, %H:%M").to_string(), why)
+}
+
 /// Deletes all but the newest `keep` backups.
 pub fn prune(paths: &Paths, keep: usize) {
     for old in list(paths).into_iter().skip(keep.max(1)) {
@@ -187,4 +209,77 @@ pub fn restore(paths: &Paths, backup: &Path) -> Result<Option<PathBuf>, String> 
 fn file_name(path: &Path) -> String {
     path.file_name()
         .map_or_else(|| "saves".into(), |n| n.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn describes_backup_names() {
+        for (name, when, why) in [
+            (
+                "2026-11-17_12-05-09_before-v0.19.0.zip",
+                "17 November 2026, 12:05",
+                "Before 0.19.0",
+            ),
+            (
+                "2026-11-02_08-00-00_manual.zip",
+                "2 November 2026, 08:00",
+                "Made by hand",
+            ),
+            (
+                "2026-11-02_08-00-00_before-restore.zip",
+                "2 November 2026, 08:00",
+                "Before a restore",
+            ),
+            ("odd.zip", "odd.zip", ""),
+        ] {
+            assert_eq!(
+                describe(name),
+                (when.to_string(), why.to_string()),
+                "{name}"
+            );
+        }
+    }
+
+    /// A backup holds only `settings.json` and `saves/`, never the
+    /// launcher's folders that share kjk's folder.
+    #[test]
+    fn backup_holds_only_saves_and_settings() {
+        let root = std::env::temp_dir().join(format!("kjk-launcher-backup-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        for dir in ["saves/slot1", "backups", "versions/0.19.0", "launcher"] {
+            fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        for file in [
+            "settings.json",
+            "saves/slot1/save.sav",
+            "versions/0.19.0/kjk",
+            "launcher/launcher.json",
+        ] {
+            fs::write(root.join(file), b"x").unwrap();
+        }
+        let mut paths = Paths::at(root.join("launcher"));
+        paths.backups = root.join("backups");
+        std::env::set_var("KJK_SAVES", root.join("saves"));
+        std::env::set_var("KJK_SETTINGS", root.join("settings.json"));
+        let zip = create(&paths, "manual").unwrap().unwrap();
+        let archive = zip::ZipArchive::new(File::open(zip).unwrap()).unwrap();
+        let mut names: Vec<String> = archive
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "saves/",
+                "saves/slot1/",
+                "saves/slot1/save.sav",
+                "settings.json"
+            ]
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
 }

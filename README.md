@@ -17,10 +17,12 @@ Version 0.1.0 cannot update itself. Replace it with 0.2.0 by hand once.
   version that is not installed downloads it and selects it.
 - When a new version of kjk is out, the Play page says so. You can read the
   release notes, skip the version, or update.
-- The "Before you play" list shows whether kjk finds KOTOR, KOTOR II and
+- The "Setup" list shows whether kjk finds KOTOR, KOTOR II and
   Jedi Academy, and whether ffmpeg is installed. Play stays disabled until
   kjk finds all three games. kjk plays without ffmpeg, but it skips the
   movies.
+- Under the Setup list, the Play page shows the release notes of the
+  selected version.
 - "Choose folder" lets you pick a game's folder. kjk checks the folder
   first. The launcher saves it in kjk's settings only when kjk finds the game
   there.
@@ -29,14 +31,14 @@ Version 0.1.0 cannot update itself. Replace it with 0.2.0 by hand once.
   Versions page.
 - Before a version starts for the first time, the launcher makes a backup of
   kjk's saves and settings. A newer version can change a save so that an
-  older version cannot read it. The Backups page restores a backup.
+  older version cannot read it. Settings lists the backups and restores one.
 - Each download is checked against the release's `SHA256SUMS` before it is
   unpacked.
 - When a new version of the launcher is out, the bottom of the window says
   so. "Update launcher" downloads it, puts it in place of the old one, and
   starts it.
-- The launcher works offline. It then says that it could not reach GitHub,
-  and Play still works.
+- The launcher works offline. It then says that it could not check GitHub
+  for updates, and Play still works.
 
 ## Steam play time
 
@@ -91,8 +93,9 @@ Point these variables at scratch folders before a test run:
 | `KJK_SAVES` | kjk's saves folder. |
 | `KJK_LAUNCHER_OFFLINE=1` | The launcher acts as if GitHub could not be reached. |
 | `KJK_LAUNCHER_SHOT=<file.png>` | The launcher saves a picture of its window and closes. |
-| `KJK_LAUNCHER_TAB=versions` | The window opens on that page (play, versions, backups or settings). |
+| `KJK_LAUNCHER_TAB=versions` | The window opens on that page (play, versions or settings). |
 | `KJK_LAUNCHER_MENU=1` | The version menu is open. `ffmpeg` opens the "Install ffmpeg" dialog instead. |
+| `KJK_LAUNCHER_SCROLL=400` | The Versions or Settings page is scrolled down that many points. |
 | `KJK_LAUNCHER_FRAME=windows` | The window has the Windows frame on any system. |
 | `KJK_LAUNCHER_SELF_PRERELEASE=1` | The launcher offers its own pre-releases as updates. |
 
