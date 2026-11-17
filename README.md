@@ -1,39 +1,73 @@
-# kjk-launcher
+# kjk launcher
 
-A launcher for [kjk](https://github.com/kjk-engine/kjk). It checks GitHub
-for a newer release each time it opens and **offers** it. Nothing is
-updated until you click Update, so a run in progress or a mod that needs a
-certain version is never broken behind your back.
+The kjk launcher is an optional program that installs and starts
+[kjk](https://github.com/kjk-engine/kjk). It checks GitHub for a new version
+of kjk each time it opens. It never installs or updates anything until you
+click a button.
 
-Made by a community contributor. The kjk project maintains it from
-version 0.2.0 on. It is released under the MIT licence (see `LICENSE`).
+Made by a community contributor. The kjk project maintains it from version
+0.2.0 on. It is released under the MIT licence (see `LICENSE`).
 
-- **Update / Skip this version / Not now**, with the release notes shown.
-- **Versions side by side.** Each version gets its own folder; older ones
-  stay installed (3 by default), so you can go back from the Versions tab.
-- **Pin** (Settings) stays on the current version and stops the offers.
-- **Saves are backed up** (saves folder + `settings.json`, as a zip) before
-  a version starts for the first time. A newer kjk may migrate saves so
-  that older versions can't read them; restoring that backup is the way
-  back. Restoring backs up the present saves first.
-- **Downloads are checked** against the release's `SHA256SUMS`, unpacked
-  into a `.partial` folder and only then renamed into place.
-- Offline or rate-limited: the launcher says so and Play still works.
-- Pre-releases: off by default (Settings or Versions tab).
+Version 0.1.0 cannot update itself. Replace it with 0.2.0 by hand once.
+
+## What the launcher does
+
+- The Play page shows the selected version of kjk and a Play button. A click
+  on the version opens a menu of releases and pre-releases. A click on a
+  version that is not installed downloads it and selects it.
+- When a new version of kjk is out, the Play page says so. You can read the
+  release notes, skip the version, or update.
+- The "Before you play" list shows whether kjk finds KOTOR, KOTOR II and
+  Jedi Academy, and whether ffmpeg is installed. Play stays disabled until
+  kjk finds all three games. kjk plays without ffmpeg, but it skips the
+  movies.
+- "Choose folder" lets you pick a game's folder. kjk checks the folder
+  first. The launcher saves it in kjk's settings only when kjk finds the game
+  there.
+- Each version of kjk is installed in its own folder. The launcher keeps the
+  3 newest versions by default, so you can go back to an older one on the
+  Versions page.
+- Before a version starts for the first time, the launcher makes a backup of
+  kjk's saves and settings. A newer version can change a save so that an
+  older version cannot read it. The Backups page restores a backup.
+- Each download is checked against the release's `SHA256SUMS` before it is
+  unpacked.
+- When a new version of the launcher is out, the bottom of the window says
+  so. "Update launcher" downloads it, puts it in place of the old one, and
+  starts it.
+- The launcher works offline. It then says that it could not reach GitHub,
+  and Play still works.
+
+## Steam play time
+
+Steam can count the time you play kjk under KOTOR or KOTOR II. Open the
+Settings page and copy the line under "Steam play time". In Steam, open that
+game's Properties and paste the line into Launch options. The line looks
+like this:
+
+```text
+"C:\Games\kjk launcher\kjk-launcher.exe" --play %command%
+```
+
+When you press Play on that game in Steam, Steam starts the launcher. The
+launcher starts kjk at once and opens no window. It waits until kjk exits, so
+Steam counts the whole session. The launcher opens its window instead when
+no version is installed, when a new version is offered, or when a game
+folder is missing.
+
+This has only been checked on Windows.
 
 ## Where things are
 
-| what | where |
+| What | Where |
 |---|---|
-| installed versions | the install folder you choose (Play tab → Change…), one subfolder per version: `kjk-engine\0.19.0\`, `kjk-engine\0.18.5\`. Default `%LOCALAPPDATA%\kjk-launcher\kjk-engine` |
-| backups, `launcher.json` | `%LOCALAPPDATA%\kjk-launcher` (or `KJK_LAUNCHER_HOME`) |
+| Installed versions | The install folder, one folder per version, such as `kjk-engine\0.19.0\`. The default is `%LOCALAPPDATA%\kjk-launcher\kjk-engine`. Settings has a button to change it. |
+| Backups and `launcher.json` | `%LOCALAPPDATA%\kjk-launcher`, or the folder `KJK_LAUNCHER_HOME` names. |
+| kjk's saves and settings | `%APPDATA%\kjk`. The launcher never moves them. `KJK_SAVES` and `KJK_SETTINGS` are honoured, as kjk honours them. |
 
-Changing the install folder offers to move the installed versions along.
-A kjk zip unzipped by hand into the install folder (as `0.18.4\` or
-`kjk-v0.18.4-windows-x86_64\`) is found and listed too; the launcher never
-removes such a folder by itself. Pick a version from the drop-down above
-Play; each entry there has an Uninstall button.
-| kjk's own saves and settings (never moved) | `%APPDATA%\kjk` (`KJK_SAVES` is honoured, as kjk does) |
+A kjk package that you unzipped by hand into the install folder (as
+`0.18.4\` or `kjk-v0.18.4-windows-x86_64\`) is listed too. The launcher never
+removes such a folder by itself.
 
 ## Build
 
@@ -41,23 +75,35 @@ Play; each entry there has an Uninstall button.
 cargo build --release
 ```
 
-Gives `target/release/kjk-launcher.exe` (the window) and
-`kjk-launcher-cli.exe` (the same actions for scripts and testing):
+The build makes `kjk-launcher` (the window) and `kjk-launcher-cli` (the same
+actions for scripts and tests). `kjk-launcher-cli status` shows the
+installed versions and whether an update is offered. `kjk-launcher -- <args>`
+passes `<args>` to kjk when you press Play.
 
-```bash
-kjk-launcher-cli status
-```
+## Testing without touching your own install
 
-`kjk-launcher -- <args>` passes `<args>` to kjk when you press Play.
+Point these variables at scratch folders before a test run:
 
-## Testing without touching your real install
+| Variable | What it changes |
+|---|---|
+| `KJK_LAUNCHER_HOME` | The launcher's versions, backups and `launcher.json`. |
+| `KJK_SETTINGS` | kjk's settings file. |
+| `KJK_SAVES` | kjk's saves folder. |
+| `KJK_LAUNCHER_OFFLINE=1` | The launcher acts as if GitHub could not be reached. |
+| `KJK_LAUNCHER_SHOT=<file.png>` | The launcher saves a picture of its window and closes. |
+| `KJK_LAUNCHER_TAB=versions` | The window opens on that page (play, versions, backups or settings). |
+| `KJK_LAUNCHER_MENU=1` | The version menu is open. `ffmpeg` opens the "Install ffmpeg" dialog instead. |
+| `KJK_LAUNCHER_FRAME=windows` | The window has the Windows frame on any system. |
+| `KJK_LAUNCHER_SELF_PRERELEASE=1` | The launcher offers its own pre-releases as updates. |
 
-```powershell
-$env:KJK_LAUNCHER_HOME = "C:\temp\kl\home"   # launcher's versions/backups
-$env:APPDATA = "C:\temp\kl\appdata"          # where it looks for kjk's saves
-.\target\release\kjk-launcher-cli.exe install v0.18.5
-.\target\release\kjk-launcher.exe            # offers the newest release
-```
+`tests/stub_kjk.sh` stands in for kjk's `installs` command in the tests.
 
-Set `KJK_LAUNCHER_GITHUB_TOKEN` if you hit GitHub's anonymous rate limit
-(60 checks an hour; unchanged lists are answered from the ETag cache).
+Set `KJK_LAUNCHER_GITHUB_TOKEN` if you reach GitHub's limit for anonymous
+checks (60 an hour). An unchanged list does not count against the limit,
+because the launcher keeps the list's ETag.
+
+## Fonts
+
+The window uses Jost, Geist and Geist Mono. The font files are built into
+the program. Their licence texts, `OFL-Jost.txt` and `OFL-Geist.txt`, are in
+`assets/fonts` and in each package.

@@ -1,9 +1,11 @@
 [package]
 name = "kjk-launcher"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Launcher for kjk that checks GitHub for new releases and installs them only when asked"
 license = "MIT"
+repository = "https://github.com/kjk-engine/kjk-launcher"
+authors = ["A community contributor", "The kjk project"]
 default-run = "kjk-launcher"
 
 [[bin]]
@@ -29,6 +31,10 @@ sysinfo = "0.40.4"
 tar = "0.4.46"
 ureq = "3.5.2"
 zip = "9.6.1"
+
+[build-dependencies]
+# kjk-launcher.exe's icon, through the toolchain's resource compiler.
+embed-resource = "3.0.12"
 
 [profile.release]
 opt-level = 3
