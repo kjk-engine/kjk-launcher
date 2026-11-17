@@ -12,4 +12,5 @@ pub mod launch;
 pub mod shot;
 pub mod theme;
 pub mod ui;
+pub mod versions;
 pub mod widgets;

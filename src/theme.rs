@@ -45,6 +45,13 @@ pub const PROGRESS: f32 = 2.0;
 /// The chevron after the version title.
 pub const CHEVRON: f32 = 10.0;
 
+/// The version menu's width.
+pub const MENU_WIDTH: f32 = 360.0;
+/// The most height the version menu's rows take before they scroll.
+pub const MENU_HEIGHT: f32 = 320.0;
+/// A menu row's height.
+pub const ROW: f32 = 32.0;
+
 /// The window's size when it opens, and the smallest it can be made.
 pub const WINDOW: [f32; 2] = [960.0, 600.0];
 pub const WINDOW_MIN: [f32; 2] = [800.0, 520.0];
