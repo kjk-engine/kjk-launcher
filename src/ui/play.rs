@@ -235,10 +235,12 @@ impl Ready {
                 }
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if widgets::compact_button(ui, "How to install").clicked() {
-                    self.ffmpeg_dialog = true;
+                if !installed {
+                    if widgets::compact_button(ui, "How to install").clicked() {
+                        self.ffmpeg_dialog = true;
+                    }
+                    ui.add_space(theme::SPACE_4);
                 }
-                ui.add_space(theme::SPACE_4);
                 if installed {
                     widgets::status(ui, Status::Ok, "Installed");
                 } else {
