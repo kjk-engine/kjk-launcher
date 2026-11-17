@@ -41,7 +41,7 @@ pub const DOT: f32 = 8.0;
 /// The top bar's height, with its hairline at the bottom.
 pub const TOP_BAR: f32 = 48.0;
 /// The mark's height in the top bar. Its width follows the picture.
-pub const MARK: f32 = 22.0;
+pub const MARK: f32 = 26.0;
 /// The progress line's height.
 pub const PROGRESS: f32 = 2.0;
 /// The chevron after the version title.
@@ -248,11 +248,12 @@ fn visuals(v: &mut egui::Visuals) {
     }
 }
 
-/// The kjk mark, as a texture for the top bar: kjk's logo on its own
-/// square. The picture is more than three times the drawn size and is drawn
-/// with linear filtering between mipmaps, so it stays sharp when small.
+/// The kjk mark, as a texture for the top bar: the band of kjk's logo
+/// (`docs/logo/kjk.svg` in kjk) without its square, cropped to the band and
+/// drawn at four times its height in the bar. It is drawn with linear
+/// filtering between mipmaps, so it stays sharp when it is drawn small.
 pub fn mark(ctx: &egui::Context) -> Option<egui::TextureHandle> {
-    let rgba = picture(include_bytes!("../assets/kjk-mark.png"))?;
+    let rgba = picture(include_bytes!("../assets/kjk-bar-mark.png"))?;
     let size = [rgba.width() as usize, rgba.height() as usize];
     let image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
     let options = egui::TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear));
