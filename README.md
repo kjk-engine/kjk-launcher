@@ -61,11 +61,25 @@ This has only been checked on Windows.
 
 ## Where things are
 
-| What | Where |
+Everything is in one folder, the kjk folder. It is `%APPDATA%\kjk` on
+Windows, `~/Library/Application Support/kjk` on macOS and
+`~/.config/kjk` on Linux.
+
+| What | Where in the kjk folder |
 |---|---|
-| Installed versions | The install folder, one folder per version, such as `kjk-engine\0.19.0\`. The default is `%LOCALAPPDATA%\kjk-launcher\kjk-engine`. Settings has a button to change it. |
-| Backups and `launcher.json` | `%LOCALAPPDATA%\kjk-launcher`, or the folder `KJK_LAUNCHER_HOME` names. |
-| kjk's saves and settings | `%APPDATA%\kjk`. The launcher never moves them. `KJK_SAVES` and `KJK_SETTINGS` are honoured, as kjk honours them. |
+| kjk's saves, settings and logs | `saves\`, `settings.json` and kjk's own files. `KJK_SAVES` and `KJK_SETTINGS` are honoured, as kjk honours them. |
+| Backups | `backups\` |
+| Installed versions | `versions\`, one folder per version, such as `versions\0.19.0\`. Settings has a button to choose another install folder. |
+| The launcher's settings, release lists and downloads | `launcher\` |
+
+Settings has a "Move" button that moves the whole kjk folder to another
+place, and the launcher then writes the new place into `moved-to.txt` in the
+default folder. "Use the default folder" moves everything back.
+
+The launcher 0.1.0 kept its files in `%LOCALAPPDATA%\kjk-launcher`. The
+first time a newer launcher starts, it moves them into the kjk folder. When
+`KJK_LAUNCHER_HOME` is set, the launcher keeps its files in that folder as
+0.1.0 did. `KJK_HOME` sets the kjk folder for both kjk and the launcher.
 
 A kjk package that you unzipped by hand into the install folder (as
 `0.18.4\` or `kjk-v0.18.4-windows-x86_64\`) is listed too. The launcher never
@@ -89,12 +103,13 @@ Point these variables at scratch folders before a test run:
 | Variable | What it changes |
 |---|---|
 | `KJK_LAUNCHER_HOME` | The launcher's versions, backups and `launcher.json`. |
+| `KJK_HOME` | The kjk folder. The "Move" button is off while it is set. |
 | `KJK_SETTINGS` | kjk's settings file. |
 | `KJK_SAVES` | kjk's saves folder. |
 | `KJK_LAUNCHER_OFFLINE=1` | The launcher acts as if GitHub could not be reached. |
 | `KJK_LAUNCHER_SHOT=<file.png>` | The launcher saves a picture of its window and closes. |
 | `KJK_LAUNCHER_TAB=versions` | The window opens on that page (play, versions or settings). |
-| `KJK_LAUNCHER_MENU=1` | The version menu is open. `ffmpeg` opens the "Install ffmpeg" dialog instead. |
+| `KJK_LAUNCHER_MENU=1` | The version menu is open. `ffmpeg` opens the "Install ffmpeg" dialog instead, and `move:<folder>` the dialog that asks to move the kjk folder there. |
 | `KJK_LAUNCHER_SCROLL=400` | The Versions or Settings page is scrolled down that many points. |
 | `KJK_LAUNCHER_FRAME=windows` | The window has the Windows frame on any system. |
 | `KJK_LAUNCHER_SELF_PRERELEASE=1` | The launcher offers its own pre-releases as updates. |

@@ -2,7 +2,7 @@
 //! without a console window on Windows, and stopped when it takes too long.
 
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -15,9 +15,20 @@ pub const TIMEOUT: Duration = Duration::from_secs(1);
 /// What `program` printed when it ran with `args` and exited with success.
 /// `None` when it could not start, failed, or ran longer than `TIMEOUT`.
 pub fn output(program: &Path, args: &[&str]) -> Option<String> {
+    output_with(program, args, &[])
+}
+
+/// `output` for kjk: with the variables of `config::kjk_env`, so a kjk
+/// whose folder was moved finds it.
+pub fn kjk_output(program: &Path, args: &[&str]) -> Option<String> {
+    output_with(program, args, &crate::config::kjk_env())
+}
+
+fn output_with(program: &Path, args: &[&str], env: &[(&str, PathBuf)]) -> Option<String> {
     let mut command = Command::new(program);
     command
         .args(args)
+        .envs(env.iter().map(|(name, value)| (name, value)))
         // A program that waits for input waits until it is stopped.
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

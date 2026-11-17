@@ -11,6 +11,7 @@ const KEEP_VERSIONS_MOST: usize = 20;
 impl Ready {
     pub(super) fn settings_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         widgets::page_title(ui, "Settings");
+        self.progress(ui);
         let mut changed = false;
 
         widgets::section_label(ui, "Updates");
@@ -162,6 +163,11 @@ impl Ready {
     fn folders_section(&mut self, ui: &mut egui::Ui) {
         widgets::section_label(ui, "Folders");
         if let Some(dir) = self.paths.kjk_data.clone() {
+            let idle = self.job.is_none();
+            // KJK_HOME is the player's own choice of folder.
+            let movable = idle && std::env::var_os("KJK_HOME").is_none();
+            let default = config::default_kjk_folder().filter(|_| config::kjk_folder_moved());
+            let (mut back, mut pick) = (false, false);
             widgets::hairline(ui);
             widgets::row(
                 ui,
@@ -176,13 +182,31 @@ impl Ready {
                         ui,
                         "Saves, settings, logs, backups and installed versions are in this folder.",
                     );
+                    if default.is_some() {
+                        back = ui
+                            .add_enabled_ui(movable, |ui| {
+                                widgets::text_button(ui, "Use the default folder")
+                            })
+                            .inner
+                            .clicked();
+                    }
                 },
                 |ui| {
+                    pick = ui
+                        .add_enabled_ui(movable, |ui| widgets::compact_button(ui, "Move"))
+                        .inner
+                        .clicked();
                     if widgets::compact_button(ui, "Open").clicked() {
                         launch::open_folder(&dir);
                     }
                 },
             );
+            if pick {
+                self.pick_kjk_folder();
+            }
+            if let Some(default) = default.filter(|_| back) {
+                self.confirm = Some(Confirm::MoveKjk(default));
+            }
         }
         widgets::hairline(ui);
         self.install_folder(ui);

@@ -99,7 +99,7 @@ impl Ready {
                 "Go back to an older version",
                 vec![
                     format!("A save made or opened by a newer version may not load in {tag}."),
-                    "If a save does not load, restore the backup from before the update on the Backups page.".to_string(),
+                    "If a save does not load, restore the backup from before the update in Settings.".to_string(),
                 ],
                 "Select it",
                 None,
@@ -116,6 +116,33 @@ impl Ready {
                 ],
                 "Move them",
                 Some("Leave them"),
+            ),
+            Confirm::MoveKjk(to) => (
+                "Move the kjk folder",
+                vec![
+                    format!(
+                        "Everything in {} moves to {}.",
+                        self.paths
+                            .kjk_data
+                            .as_deref()
+                            .unwrap_or(std::path::Path::new(""))
+                            .display(),
+                        to.display()
+                    ),
+                    "Saves, settings, logs, backups and installed versions move with it.".to_string(),
+                    "Close kjk before you move its folder.".to_string(),
+                ],
+                "Move",
+                None,
+            ),
+            Confirm::UseKjk(to) => (
+                "Use this folder",
+                vec![
+                    to.display().to_string(),
+                    "This folder already has kjk files. Use it without moving anything?".to_string(),
+                ],
+                "Use this folder",
+                None,
             ),
         };
         let mut answer = None;
@@ -161,6 +188,8 @@ impl Ready {
                 self.config.current = Some(tag);
                 self.save();
             }
+            Confirm::MoveKjk(to) => self.start_kjk_move(ctx, to),
+            Confirm::UseKjk(to) => self.use_kjk_folder(to),
             Confirm::ChangeFolder(dir) => {
                 if yes {
                     self.start_move(ctx, dir);

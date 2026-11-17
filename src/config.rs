@@ -69,20 +69,37 @@ impl Config {
     }
 }
 
-/// The launcher's folders and its settings, ready to use.
+/// The launcher's folders and its settings, ready to use. A failed move
+/// from the 0.1.0 layout is printed, and the old place is used.
 pub fn open() -> Result<(Paths, Config), String> {
-    let mut paths = Paths::discover()?;
-    let config = Config::load(&paths);
-    paths.use_install_dir(&config)?;
+    let (paths, config, problem) = open_noting()?;
+    if let Some(problem) = problem {
+        eprintln!("{problem}");
+    }
     Ok((paths, config))
 }
 
+/// As `open`, with the sentence to show when the move from the 0.1.0
+/// layout failed.
+pub fn open_noting() -> Result<(Paths, Config, Option<String>), String> {
+    let (mut paths, problem) = Paths::discover()?;
+    let config = Config::load(&paths);
+    paths.use_install_dir(&config)?;
+    Ok((paths, config, problem))
+}
+
+/// The file in kjk's default folder that names the folder kjk was moved to.
+pub const MOVED_TO: &str = "moved-to.txt";
+
 #[derive(Clone, Debug)]
 pub struct Paths {
-    /// `%LOCALAPPDATA%\kjk-launcher` (or `KJK_LAUNCHER_HOME`).
+    /// The launcher's own files: `launcher` in kjk's folder (or
+    /// `KJK_LAUNCHER_HOME`, or the 0.1.0 folder `%LOCALAPPDATA%\kjk-launcher`).
     pub root: PathBuf,
     /// The install folder: one subfolder per version (`Config::install_dir`).
     pub versions: PathBuf,
+    /// The install folder when the settings name none.
+    pub default_versions: PathBuf,
     pub backups: PathBuf,
     pub downloads: PathBuf,
     pub config_file: PathBuf,
@@ -90,28 +107,53 @@ pub struct Paths {
     /// The launcher's own release list, cached like kjk's.
     pub launcher_cache_file: PathBuf,
     /// kjk's own folder: settings, saves, logs. Found the way kjk finds it
-    /// (`store::kjk_folder`): `%APPDATA%\kjk`, `~/Library/Application
-    /// Support/kjk`, or `$XDG_CONFIG_HOME/kjk`.
+    /// (`resolve_kjk_folder`).
     pub kjk_data: Option<PathBuf>,
 }
 
 impl Paths {
-    pub fn discover() -> Result<Paths, String> {
-        let root = var("KJK_LAUNCHER_HOME")
-            .map(PathBuf::from)
-            .or_else(|| dirs::data_local_dir().map(|dir| dir.join("kjk-launcher")))
-            .ok_or("could not tell where to keep the launcher's files (no home folder)")?;
-        let paths = Paths::at(root);
+    /// The launcher's folders, made if missing. `KJK_LAUNCHER_HOME` keeps
+    /// the 0.1.0 layout in that folder. Otherwise the launcher's files are
+    /// in kjk's folder, moved there from the 0.1.0 folder the first time.
+    /// The second value is why that move failed; the 0.1.0 folder is then
+    /// used for this run.
+    pub fn discover() -> Result<(Paths, Option<String>), String> {
+        let old_root = dirs::data_local_dir().map(|dir| dir.join("kjk-launcher"));
+        let (paths, problem) = match (var("KJK_LAUNCHER_HOME"), kjk_folder(), old_root) {
+            (Some(home), ..) => (Paths::at(PathBuf::from(home)), None),
+            (None, Some(kjk), old) => {
+                let moved = old
+                    .as_ref()
+                    .map_or(Ok(()), |old| crate::folders::migrate(old, &kjk));
+                match (moved, old) {
+                    (Err(e), Some(old)) => (
+                        Paths::at(old),
+                        Some(format!(
+                            "The launcher could not move its files into the kjk folder: {e}"
+                        )),
+                    ),
+                    _ => (Paths::in_kjk_folder(kjk), None),
+                }
+            }
+            (None, None, Some(old)) => (Paths::at(old), None),
+            (None, None, None) => {
+                return Err(
+                    "could not tell where to keep the launcher's files (no home folder)".into(),
+                )
+            }
+        };
         for dir in [&paths.root, &paths.backups, &paths.downloads] {
             fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
-        Ok(paths)
+        Ok((paths, problem))
     }
 
-    /// The launcher's files in `root`, without making any folder.
+    /// The 0.1.0 layout in `root`, without making any folder.
     pub fn at(root: PathBuf) -> Paths {
+        let versions = root.join("kjk-engine");
         Paths {
-            versions: root.join("kjk-engine"),
+            versions: versions.clone(),
+            default_versions: versions,
             backups: root.join("backups"),
             downloads: root.join("downloads"),
             config_file: root.join("launcher.json"),
@@ -122,8 +164,26 @@ impl Paths {
         }
     }
 
+    /// The layout in kjk's folder `kjk`: `launcher/`, `backups/` and
+    /// `versions/`, without making any folder.
+    pub fn in_kjk_folder(kjk: PathBuf) -> Paths {
+        let root = kjk.join("launcher");
+        let versions = kjk.join("versions");
+        Paths {
+            versions: versions.clone(),
+            default_versions: versions,
+            backups: kjk.join("backups"),
+            downloads: root.join("downloads"),
+            config_file: root.join("launcher.json"),
+            cache_file: root.join("releases-cache.json"),
+            launcher_cache_file: root.join("launcher-releases-cache.json"),
+            kjk_data: Some(kjk),
+            root,
+        }
+    }
+
     pub fn default_install_dir(&self) -> PathBuf {
-        self.root.join("kjk-engine")
+        self.default_versions.clone()
     }
 
     /// Points `versions` at the configured install folder and makes it.
@@ -157,7 +217,34 @@ fn var(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
-fn kjk_folder() -> Option<PathBuf> {
+/// kjk's folder, found as kjk finds it: `KJK_HOME` when set, else the
+/// default folder, or the folder its `moved-to.txt` names.
+pub fn kjk_folder() -> Option<PathBuf> {
+    resolve_kjk_folder(var("KJK_HOME").map(PathBuf::from), default_kjk_folder())
+}
+
+/// kjk's folder from `KJK_HOME` (`home`) and the default folder: `home`
+/// when it is set; else the folder the first line of the default folder's
+/// `moved-to.txt` names, when that folder exists; else the default folder.
+pub fn resolve_kjk_folder(home: Option<PathBuf>, default: Option<PathBuf>) -> Option<PathBuf> {
+    if home.is_some() {
+        return home;
+    }
+    let default = default?;
+    Some(moved_to(&default).unwrap_or(default))
+}
+
+/// The existing folder that `moved-to.txt` in the default folder names.
+pub fn moved_to(default: &Path) -> Option<PathBuf> {
+    let text = fs::read_to_string(default.join(MOVED_TO)).ok()?;
+    let first = text.lines().next()?.trim();
+    let dir = PathBuf::from(first);
+    (!first.is_empty() && dir.is_dir()).then_some(dir)
+}
+
+/// kjk's folder when it was never moved: `%APPDATA%\kjk`,
+/// `~/Library/Application Support/kjk`, or `$XDG_CONFIG_HOME/kjk`.
+pub fn default_kjk_folder() -> Option<PathBuf> {
     let base = if cfg!(target_os = "macos") {
         var("HOME").map(|home| {
             PathBuf::from(home)
@@ -172,6 +259,32 @@ fn kjk_folder() -> Option<PathBuf> {
             .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".config")))
     };
     base.map(|base| base.join("kjk"))
+}
+
+/// Whether kjk's folder was moved with the launcher: `KJK_HOME` is not set
+/// and the default folder has a `moved-to.txt` that names a folder.
+pub fn kjk_folder_moved() -> bool {
+    var("KJK_HOME").is_none() && default_kjk_folder().is_some_and(|dir| moved_to(&dir).is_some())
+}
+
+/// The variables every start of kjk gets while its folder is moved, so a
+/// kjk that does not read `moved-to.txt` finds its folder too: `KJK_HOME`,
+/// `KJK_SAVES` and `KJK_SETTINGS`, each unless the player set it already.
+pub fn kjk_env() -> Vec<(&'static str, PathBuf)> {
+    if !kjk_folder_moved() {
+        return Vec::new();
+    }
+    let Some(dir) = kjk_folder() else {
+        return Vec::new();
+    };
+    [
+        ("KJK_HOME", dir.clone()),
+        ("KJK_SAVES", dir.join("saves")),
+        ("KJK_SETTINGS", dir.join("settings.json")),
+    ]
+    .into_iter()
+    .filter(|(name, _)| var(name).is_none())
+    .collect()
 }
 
 /// Writes through a temporary file, so a crash never leaves half a file.
@@ -199,6 +312,31 @@ pub fn file_safe(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("kjk-launcher-config-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn kjk_folder_in_order() {
+        let dir = scratch("resolve");
+        let (default, moved, home) = (dir.join("default"), dir.join("moved"), dir.join("home"));
+        fs::create_dir_all(&default).unwrap();
+        let resolve =
+            |home: Option<&PathBuf>| resolve_kjk_folder(home.cloned(), Some(default.clone()));
+        assert_eq!(resolve(None), Some(default.clone()));
+        // A pointer to a folder that does not exist is ignored.
+        fs::write(default.join(MOVED_TO), format!("{}\nmore", moved.display())).unwrap();
+        assert_eq!(resolve(None), Some(default.clone()));
+        fs::create_dir_all(&moved).unwrap();
+        assert_eq!(resolve(None), Some(moved.clone()));
+        assert_eq!(resolve(Some(&home)), Some(home.clone()));
+        assert_eq!(resolve_kjk_folder(None, None), None);
+    }
 
     #[test]
     fn reads_a_0_1_0_config_with_background_fields() {

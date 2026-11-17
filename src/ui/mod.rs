@@ -8,8 +8,9 @@ mod settings;
 mod versions;
 
 use crate::backup::{self, Backup};
-use crate::config::{Config, Paths};
+use crate::config::{self, Config, Paths};
 use crate::ffmpeg;
+use crate::folders;
 use crate::github::{self, Release, Releases};
 use crate::install::{self, Installed, Moved, Progress};
 use crate::kjk_report::{self, Game, GameStatus, Report};
@@ -84,6 +85,11 @@ enum Outcome {
         to: PathBuf,
         moved: Moved,
     },
+    /// kjk's folder moved to `to`, or why it did not.
+    KjkMoved {
+        to: PathBuf,
+        result: Result<(), String>,
+    },
     /// The launcher's update failed (on success the new launcher runs and
     /// this one has closed).
     SelfUpdateFailed {
@@ -95,6 +101,8 @@ struct Job {
     title: String,
     progress: Arc<Progress>,
     cancellable: bool,
+    /// The progress counts files and folders, not bytes.
+    items: bool,
     done: mpsc::Receiver<Outcome>,
 }
 
@@ -103,6 +111,10 @@ enum Confirm {
     Uninstall(String),
     UseOlder(String),
     ChangeFolder(PathBuf),
+    /// Move kjk's folder to this folder.
+    MoveKjk(PathBuf),
+    /// Use this folder, which already has kjk's files, as kjk's folder.
+    UseKjk(PathBuf),
 }
 
 /// The game folders as the selected version reports them.
@@ -194,8 +206,8 @@ impl App {
     fn new(ctx: &egui::Context, args: Vec<String>, steam: Option<String>) -> App {
         theme::install(ctx);
         frame::start(ctx);
-        match crate::config::open() {
-            Ok((paths, config)) => {
+        match config::open_noting() {
+            Ok((paths, config, moved)) => {
                 let paths_launcher_cache = paths.launcher_cache_file.clone();
                 install::clean_leftovers(&paths);
                 let mut ready = Ready {
@@ -230,7 +242,8 @@ impl App {
                     shot: Shot::from_env(),
                 };
                 ready.refresh();
-                ready.notice = steam.map(Notice::Warn);
+                ready.notice = steam.map(Notice::Warn).or(moved.map(Notice::Error));
+                ready.confirm = shot::move_to().map(Confirm::MoveKjk);
                 if ready.config.check_on_start {
                     ready.check(ctx);
                 }
@@ -387,6 +400,7 @@ impl Ready {
             title,
             progress,
             cancellable: true,
+            items: false,
             done: rx,
         });
     }
@@ -406,6 +420,7 @@ impl Ready {
             title: "Moving installed versions".into(),
             progress,
             cancellable: false,
+            items: false,
             done: rx,
         });
     }
@@ -417,6 +432,98 @@ impl Ready {
         }
         self.save();
         self.refresh();
+    }
+
+    /// Asks for a new place for kjk's folder, and asks to move it there.
+    fn pick_kjk_folder(&mut self) {
+        if launch::kjk_running() {
+            self.notice = Some(Notice::Error(
+                "Close kjk before you move its folder.".into(),
+            ));
+            return;
+        }
+        let Some(from) = self.paths.kjk_data.clone() else {
+            return;
+        };
+        let Some(to) = rfd::FileDialog::new()
+            .set_title("Choose the new place for the kjk folder")
+            .pick_folder()
+        else {
+            return;
+        };
+        if to == from {
+            return;
+        }
+        if let Some(why) = folders::refuse_move(&from, &to) {
+            self.notice = Some(Notice::Error(why));
+        } else if folders::is_empty(&to) {
+            self.confirm = Some(Confirm::MoveKjk(to));
+        } else if folders::is_kjk_folder(&to) {
+            self.confirm = Some(Confirm::UseKjk(to));
+        } else {
+            self.notice = Some(Notice::Error(
+                "Choose an empty folder for the kjk folder.".into(),
+            ));
+        }
+    }
+
+    /// Moves kjk's folder to `to` on a background thread.
+    fn start_kjk_move(&mut self, ctx: &egui::Context, to: PathBuf) {
+        if launch::kjk_running() {
+            self.notice = Some(Notice::Error(
+                "Close kjk before you move its folder.".into(),
+            ));
+            return;
+        }
+        let (Some(from), Some(default)) =
+            (self.paths.kjk_data.clone(), config::default_kjk_folder())
+        else {
+            return;
+        };
+        let progress = Arc::new(Progress::default());
+        let (tx, rx) = mpsc::channel();
+        let worker = progress.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = folders::move_kjk_folder(&from, &to, &default, &worker);
+            let _ = tx.send(Outcome::KjkMoved { to, result });
+            ctx.request_repaint();
+        });
+        self.job = Some(Job {
+            title: "Moving the kjk folder".into(),
+            progress,
+            cancellable: false,
+            items: true,
+            done: rx,
+        });
+    }
+
+    /// Makes `to`, which already has kjk's files, kjk's folder.
+    fn use_kjk_folder(&mut self, to: PathBuf) {
+        let Some(default) = config::default_kjk_folder() else {
+            return;
+        };
+        self.notice = Some(match folders::point_to(&default, &to) {
+            Ok(()) => Notice::Info(format!("The kjk folder is now {}.", to.display())),
+            Err(e) => Notice::Error(e),
+        });
+        self.reload_paths();
+    }
+
+    /// Finds the launcher's folders again after kjk's folder changed, and
+    /// saves the settings at the new place.
+    fn reload_paths(&mut self) {
+        match Paths::discover().and_then(|(mut paths, _)| {
+            paths.use_install_dir(&self.config)?;
+            Ok(paths)
+        }) {
+            Ok(paths) => {
+                self.paths = paths;
+                self.save();
+                self.games = Games::Stale;
+            }
+            Err(e) => self.notice = Some(Notice::Error(e)),
+        }
     }
 
     fn pick_install_dir(&mut self) {
@@ -475,6 +582,13 @@ impl Ready {
         let Some(outcome) = finished else { return };
         self.job = None;
         match outcome {
+            Outcome::KjkMoved { to, result } => {
+                self.notice = Some(match result {
+                    Ok(()) => Notice::Info(format!("The kjk folder is now {}.", to.display())),
+                    Err(e) => Notice::Error(format!("The kjk folder could not be moved. {e}")),
+                });
+                self.reload_paths();
+            }
             Outcome::SelfUpdateFailed { link } => {
                 self.self_update_failed = Some((
                     "The launcher could not update itself. Download the new version from the release page.".to_string(),
@@ -714,6 +828,7 @@ impl Ready {
             title,
             progress,
             cancellable: true,
+            items: false,
             done: rx,
         });
     }
@@ -758,14 +873,16 @@ impl Ready {
             ui,
             |ui| {
                 ui.label(widgets::text(&job.title, Text::Heading, theme::INK));
-                widgets::muted(
-                    ui,
+                let amount = if job.items {
+                    format!("{stage}. {done} of {total}.")
+                } else {
                     format!(
                         "{stage}. {:.1} of {:.1} MB.",
                         done as f64 / 1e6,
                         total as f64 / 1e6
-                    ),
-                );
+                    )
+                };
+                widgets::muted(ui, amount);
             },
             |ui| {
                 if job.cancellable {

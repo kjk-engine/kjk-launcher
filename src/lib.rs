@@ -8,6 +8,7 @@ pub mod backup;
 pub mod cli;
 pub mod config;
 pub mod ffmpeg;
+pub mod folders;
 pub mod github;
 pub mod install;
 pub mod kjk_report;

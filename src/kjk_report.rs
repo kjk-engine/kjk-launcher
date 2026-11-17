@@ -100,13 +100,13 @@ pub fn parse(stdout: &str) -> Option<Report> {
 /// Runs `<kjk> installs --json`. None when the program is older than the
 /// command, prints anything else, fails, or takes longer than 10 seconds.
 pub fn ask(kjk: &Path) -> Option<Report> {
-    parse(&run::output(kjk, &["installs", "--json"])?)
+    parse(&run::kjk_output(kjk, &["installs", "--json"])?)
 }
 
 /// Runs `<kjk> installs --json --check <game> <path>`.
 pub fn check(kjk: &Path, game: Game, folder: &Path) -> Option<GameStatus> {
     let folder = folder.to_str()?;
-    let answer = run::output(kjk, &["installs", "--json", "--check", game.key(), folder])?;
+    let answer = run::kjk_output(kjk, &["installs", "--json", "--check", game.key(), folder])?;
     parse(&answer)?.status(game).cloned()
 }
 
