@@ -1,9 +1,11 @@
 //! A picture of the window, to check its look without a screen grab.
 //! `KJK_LAUNCHER_SHOT=<file.png>` saves the window once it has drawn a few
 //! frames and nothing is loading, then closes it.
-//! `KJK_LAUNCHER_TAB=play|versions|backups|settings` picks the tab the
+//! `KJK_LAUNCHER_TAB=play|versions|settings` picks the tab the
 //! window opens on. `KJK_LAUNCHER_MENU=1` opens the version menu, and
 //! `KJK_LAUNCHER_MENU=ffmpeg` opens the "Install ffmpeg" dialog.
+//! `KJK_LAUNCHER_SCROLL=<points>` scrolls the Versions and Settings pages
+//! down that far.
 
 use eframe::egui;
 use std::path::PathBuf;
@@ -69,4 +71,9 @@ pub fn menu_open() -> bool {
 /// Whether `KJK_LAUNCHER_MENU=ffmpeg` asks for the ffmpeg dialog to be open.
 pub fn ffmpeg_open() -> bool {
     std::env::var("KJK_LAUNCHER_MENU").is_ok_and(|v| v == "ffmpeg")
+}
+
+/// How far `KJK_LAUNCHER_SCROLL` scrolls the page down, in points.
+pub fn scroll() -> Option<f32> {
+    std::env::var("KJK_LAUNCHER_SCROLL").ok()?.parse().ok()
 }

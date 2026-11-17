@@ -1,7 +1,6 @@
 //! The launcher's window: the frame, the shared state and the footer. Each
 //! page is in its own file.
 
-mod backups;
 mod dialogs;
 mod frame;
 mod play;
@@ -52,18 +51,16 @@ pub fn run(args: Vec<String>, steam: Option<String>) -> eframe::Result {
 enum Tab {
     Play,
     Versions,
-    Backups,
     Settings,
 }
 
 impl Tab {
-    const ALL: [Tab; 4] = [Tab::Play, Tab::Versions, Tab::Backups, Tab::Settings];
+    const ALL: [Tab; 3] = [Tab::Play, Tab::Versions, Tab::Settings];
 
     fn name(self) -> &'static str {
         match self {
             Tab::Play => "Play",
             Tab::Versions => "Versions",
-            Tab::Backups => "Backups",
             Tab::Settings => "Settings",
         }
     }
@@ -175,12 +172,14 @@ struct Ready {
     asking: Option<mpsc::Receiver<(Option<Report>, bool)>>,
     /// Whether the "Install ffmpeg" dialog is open.
     ffmpeg_dialog: bool,
-    /// Whether the full "Before you play" list is open while all is ready.
+    /// Whether the full Setup list is open while all is ready.
     show_details: bool,
     /// Why a folder the player chose is not usable, by game.
     folder_problems: HashMap<&'static str, String>,
     /// The folder check in progress.
     folder_check: Option<FolderCheck>,
+    /// Whether Settings lists every backup, not only the newest.
+    show_all_backups: bool,
     /// Opens the version menu on the first frame (`KJK_LAUNCHER_MENU`).
     open_menu: bool,
     shot: Shot,
@@ -226,6 +225,7 @@ impl App {
                     show_details: false,
                     folder_problems: HashMap::new(),
                     folder_check: None,
+                    show_all_backups: false,
                     open_menu: shot::menu_open(),
                     shot: Shot::from_env(),
                 };
@@ -571,14 +571,20 @@ impl Ready {
             });
 
         egui::CentralPanel::default().frame(page).show(ui, |ui| {
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| match self.tab {
-                    Tab::Play => self.play_tab(ui, ctx),
-                    Tab::Versions => self.versions_tab(ui, ctx),
-                    Tab::Backups => self.backups_tab(ui),
-                    Tab::Settings => self.settings_tab(ui, ctx),
-                });
+            // The Play page scrolls by itself: its release notes can scroll
+            // inside their panel.
+            if self.tab == Tab::Play {
+                self.play_tab(ui, ctx);
+                return;
+            }
+            let mut page = egui::ScrollArea::vertical().auto_shrink([false, false]);
+            if let Some(offset) = shot::scroll() {
+                page = page.vertical_scroll_offset(offset);
+            }
+            page.show(ui, |ui| match self.tab {
+                Tab::Versions => self.versions_tab(ui, ctx),
+                _ => self.settings_tab(ui, ctx),
+            });
         });
 
         self.confirm_window(ctx);
@@ -774,7 +780,7 @@ impl Ready {
         ui.add_space(theme::SPACE_6);
     }
 
-    /// The install folder, with buttons to change and open it.
+    /// The install folder, with a button to change it.
     fn install_folder(&mut self, ui: &mut egui::Ui) {
         let folder = self.paths.versions.display().to_string();
         widgets::row(
@@ -782,14 +788,10 @@ impl Ready {
             |ui| {
                 ui.label(widgets::text("Install folder", Text::Heading, theme::INK));
                 ui.label(widgets::text(folder, Text::Mono, theme::INK_MUTED));
-                widgets::muted(ui, "Each version is in its own folder inside this one.");
             },
             |ui| {
-                if widgets::compact_button(ui, "Open folder").clicked() {
-                    launch::open_folder(&self.paths.versions);
-                }
                 let change = ui.add_enabled_ui(self.job.is_none(), |ui| {
-                    widgets::compact_button(ui, "Change folder")
+                    widgets::compact_button(ui, "Change")
                 });
                 if change.inner.clicked() {
                     self.pick_install_dir();

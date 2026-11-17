@@ -53,12 +53,14 @@ pub const MENU_WIDTH: f32 = 360.0;
 pub const MENU_HEIGHT: f32 = 320.0;
 /// A menu row's height.
 pub const ROW: f32 = 32.0;
-/// A row's height on the Versions page.
-pub const VERSION_ROW: f32 = 36.0;
+/// A line's height in the lists of versions and backups.
+pub const LIST_ROW: f32 = 36.0;
 /// The height of a compact button and a number field.
 pub const COMPACT: f32 = 24.0;
 /// A number field's smallest width.
 pub const NUMBER_WIDTH: f32 = 40.0;
+/// The room a row keeps free for its controls at the right end.
+pub const ROW_CONTROLS: f32 = 240.0;
 /// The height of the footer's line.
 pub const FOOTER_ROW: f32 = 32.0;
 
