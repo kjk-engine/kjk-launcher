@@ -2,6 +2,7 @@
 
 use crate::backup::{self, Backup};
 use crate::config::{Config, Paths};
+use crate::ffmpeg;
 use crate::github::{self, Release, Releases};
 use crate::install::{self, Installed, Moved, Progress};
 use crate::kjk_report::{self, Game, GameStatus, Report};
@@ -95,8 +96,9 @@ enum Games {
     Stale,
     /// Asked, and waiting for the answer for this version.
     Asking(String),
-    /// The answer for this version. `None` when it cannot report.
-    Known(String, Option<Report>),
+    /// The answer for this version (`None` when it cannot report), and
+    /// whether ffmpeg is installed.
+    Known(String, Option<Report>, bool),
 }
 
 enum Notice {
@@ -127,7 +129,9 @@ struct Ready {
     /// What the selected version reports about its game folders and ffmpeg.
     games: Games,
     /// The report being asked for, on a background thread.
-    asking: Option<mpsc::Receiver<Option<Report>>>,
+    asking: Option<mpsc::Receiver<(Option<Report>, bool)>>,
+    /// Whether the "Install ffmpeg" dialog is open.
+    ffmpeg_dialog: bool,
     /// Whether the full "Before you play" list is open while all is ready.
     show_details: bool,
     /// Why a folder the player chose is not usable, by game.
@@ -168,6 +172,7 @@ impl App {
                     mark: theme::mark(ctx),
                     games: Games::Stale,
                     asking: None,
+                    ffmpeg_dialog: shot::ffmpeg_open(),
                     show_details: false,
                     folder_problems: HashMap::new(),
                     open_menu: shot::menu_open(),
@@ -205,6 +210,23 @@ fn checked_ago(minutes: u64) -> String {
         1 => "Checked for updates 1 minute ago.".to_string(),
         n => format!("Checked for updates {n} minutes ago."),
     }
+}
+
+/// A dialog in the middle of the window: `SURFACE_RAISED`, `RADIUS_LG`
+/// corners and a title in the title style.
+fn dialog(ctx: &egui::Context, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+    egui::Window::new(title)
+        .title_bar(false)
+        .collapsible(false)
+        .resizable(false)
+        .frame(widgets::raised_frame().inner_margin(egui::Margin::same(theme::SPACE_6 as i8)))
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.set_max_width(theme::DIALOG_WIDTH);
+            ui.label(widgets::text(title, Text::Title, theme::INK));
+            ui.add_space(theme::SPACE_3);
+            add(ui);
+        });
 }
 
 fn megabytes(bytes: u64) -> String {
@@ -403,7 +425,8 @@ impl Ready {
             if let Ok(answer) = rx.try_recv() {
                 self.asking = None;
                 if let Games::Asking(tag) = &self.games {
-                    self.games = Games::Known(tag.clone(), answer);
+                    let (report, ffmpeg) = answer;
+                    self.games = Games::Known(tag.clone(), report, ffmpeg);
                 }
             }
         }
@@ -612,9 +635,9 @@ impl Ready {
         };
 
         self.ask_kjk(ctx, &current);
-        let report = match &self.games {
-            Games::Known(_, report) => report.clone(),
-            _ => None,
+        let (report, ffmpeg) = match &self.games {
+            Games::Known(_, report, ffmpeg) => (report.clone(), *ffmpeg),
+            _ => (None, true),
         };
         let blocked = kjk_report::blocked_by(report.as_ref());
 
@@ -660,7 +683,8 @@ impl Ready {
             ui.add_space(theme::SPACE_6);
         }
 
-        self.before_you_play(ui, &current, report.as_ref());
+        self.before_you_play(ui, &current, report.as_ref(), ffmpeg);
+        self.ffmpeg_window(ui.ctx());
     }
 
     /// Asks the selected version for its report on a background thread,
@@ -668,7 +692,7 @@ impl Ready {
     fn ask_kjk(&mut self, ctx: &egui::Context, current: &Installed) {
         let fresh = match &self.games {
             Games::Stale => false,
-            Games::Asking(tag) | Games::Known(tag, _) => *tag == current.tag,
+            Games::Asking(tag) | Games::Known(tag, ..) => *tag == current.tag,
         };
         if fresh {
             return;
@@ -677,7 +701,14 @@ impl Ready {
         let kjk = install::game_binary(&current.dir);
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(kjk_report::ask(&kjk));
+            let report = kjk_report::ask(&kjk);
+            // A kjk without the command, or a report without ffmpeg, leaves
+            // the launcher to look for ffmpeg itself.
+            let ffmpeg = report
+                .as_ref()
+                .and_then(|r| r.ffmpeg)
+                .unwrap_or_else(ffmpeg::installed);
+            let _ = tx.send((report, ffmpeg));
             ctx.request_repaint();
         });
         self.asking = Some(rx);
@@ -685,7 +716,13 @@ impl Ready {
     }
 
     /// The "Before you play" section: a row for each game.
-    fn before_you_play(&mut self, ui: &mut egui::Ui, current: &Installed, report: Option<&Report>) {
+    fn before_you_play(
+        &mut self,
+        ui: &mut egui::Ui,
+        current: &Installed,
+        report: Option<&Report>,
+        ffmpeg: bool,
+    ) {
         widgets::section_label(ui, "Before you play");
         ui.add_space(theme::SPACE_2);
         if matches!(self.games, Games::Asking(_) | Games::Stale) {
@@ -702,9 +739,12 @@ impl Ready {
                 Text::Body,
                 theme::INK_MUTED,
             ));
+            ui.add_space(theme::SPACE_2);
+            widgets::hairline(ui);
+            self.ffmpeg_row(ui, ffmpeg);
+            widgets::hairline(ui);
             return;
         };
-        let ffmpeg = report.ffmpeg == Some(true);
         if kjk_report::all_ready(report, ffmpeg) && !self.show_details {
             ui.horizontal(|ui| {
                 widgets::status(ui, Status::Ok, "Ready to play");
@@ -725,6 +765,94 @@ impl Ready {
             self.game_row(ui, current, game, &status);
         }
         widgets::hairline(ui);
+        self.ffmpeg_row(ui, ffmpeg);
+        widgets::hairline(ui);
+    }
+
+    /// The ffmpeg row: its status, why it matters when it is missing, and a
+    /// button that shows how to install it.
+    fn ffmpeg_row(&mut self, ui: &mut egui::Ui, installed: bool) {
+        ui.add_space(theme::SPACE_3);
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(widgets::text("ffmpeg", Text::Heading, theme::INK));
+                if !installed {
+                    ui.label(widgets::text(
+                        "Movies are skipped until ffmpeg is installed. The game runs without it.",
+                        Text::Body,
+                        theme::INK_MUTED,
+                    ));
+                }
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if widgets::secondary_button(ui, "How to install").clicked() {
+                    self.ffmpeg_dialog = true;
+                }
+                ui.add_space(theme::SPACE_4);
+                if installed {
+                    widgets::status(ui, Status::Ok, "Installed");
+                } else {
+                    widgets::status(ui, Status::Warn, "Not installed");
+                }
+            });
+        });
+        ui.add_space(theme::SPACE_3);
+    }
+
+    /// The "Install ffmpeg" dialog.
+    fn ffmpeg_window(&mut self, ctx: &egui::Context) {
+        if !self.ffmpeg_dialog {
+            return;
+        }
+        let mut open = true;
+        let mut check = false;
+        dialog(ctx, "Install ffmpeg", |ui| {
+            ui.label(widgets::text(
+                "Run this command in a terminal to install ffmpeg.",
+                Text::Body,
+                theme::INK,
+            ));
+            ui.horizontal(|ui| {
+                ui.label(widgets::text(
+                    ffmpeg::install_command(),
+                    Text::Mono,
+                    theme::INK,
+                ));
+                if widgets::secondary_button(ui, "Copy").clicked() {
+                    ui.ctx().copy_text(ffmpeg::install_command().to_string());
+                }
+            });
+            if cfg!(target_os = "linux") {
+                ui.label(widgets::text(
+                    "Use your own package manager if this computer does not have apt.",
+                    Text::Body,
+                    theme::INK_MUTED,
+                ));
+            }
+            ui.label(widgets::text(
+                "The ffmpeg website lists other ways to install it.",
+                Text::Body,
+                theme::INK_MUTED,
+            ));
+            ui.hyperlink_to(
+                widgets::text(ffmpeg::DOWNLOAD_PAGE, Text::Mono, theme::INK),
+                ffmpeg::DOWNLOAD_PAGE,
+            );
+            ui.add_space(theme::SPACE_3);
+            ui.horizontal(|ui| {
+                if widgets::primary_button(ui, "Check again").clicked() {
+                    check = true;
+                }
+                if widgets::secondary_button(ui, "Close").clicked() {
+                    open = false;
+                }
+            });
+        });
+        if check {
+            self.games = Games::Stale;
+            open = false;
+        }
+        self.ffmpeg_dialog = open;
     }
 
     /// One game's row: its name, its folder or why kjk needs it, its status
