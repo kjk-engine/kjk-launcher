@@ -7,6 +7,7 @@ use crate::install::{self, Installed, Moved, Progress};
 use crate::launch;
 use crate::shot::{self, Shot};
 use crate::theme::{self, Text};
+use crate::versions;
 use crate::widgets::{self, Status};
 use eframe::egui::{self, RichText};
 use std::cmp::Ordering as CmpOrdering;
@@ -100,6 +101,8 @@ struct Ready {
     backups: Vec<Backup>,
     checking: Option<mpsc::Receiver<Releases>>,
     online: Option<bool>,
+    /// When GitHub last answered a check.
+    checked_at: Option<std::time::Instant>,
     problem: Option<String>,
     job: Option<Job>,
     not_now: bool,
@@ -109,6 +112,8 @@ struct Ready {
     /// Passed to kjk when Play starts it.
     args: Vec<String>,
     mark: Option<egui::TextureHandle>,
+    /// Opens the version menu on the first frame (`KJK_LAUNCHER_MENU`).
+    open_menu: bool,
     shot: Shot,
 }
 
@@ -132,6 +137,7 @@ impl App {
                     config,
                     checking: None,
                     online: None,
+                    checked_at: None,
                     problem: None,
                     job: None,
                     not_now: false,
@@ -140,6 +146,7 @@ impl App {
                     tab: Tab::from_env(),
                     args,
                     mark: theme::mark(ctx),
+                    open_menu: shot::menu_open(),
                     shot: Shot::from_env(),
                 };
                 ready.refresh();
@@ -164,6 +171,15 @@ impl eframe::App for App {
             }
             App::Ready(ready) => ready.update(ui),
         }
+    }
+}
+
+/// "Checked for updates 3 minutes ago."
+fn checked_ago(minutes: u64) -> String {
+    match minutes {
+        0 => "Checked for updates less than a minute ago.".to_string(),
+        1 => "Checked for updates 1 minute ago.".to_string(),
+        n => format!("Checked for updates {n} minutes ago."),
     }
 }
 
@@ -349,6 +365,9 @@ impl Ready {
             if let Ok(releases) = rx.try_recv() {
                 self.checking = None;
                 self.online = Some(releases.online);
+                if releases.online {
+                    self.checked_at = Some(std::time::Instant::now());
+                }
                 self.problem = releases.problem;
                 if !releases.list.is_empty() {
                     self.releases = releases.list;
@@ -403,6 +422,9 @@ impl Ready {
         self.poll();
         if self.job.is_some() || self.checking.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
+        } else {
+            // The footer counts the minutes since the last check.
+            ctx.request_repaint_after(Duration::from_secs(30));
         }
 
         let page = egui::Frame::new()
@@ -476,24 +498,26 @@ impl Ready {
         });
     }
 
+    /// The footer's left side: a notice, or when the launcher last checked
+    /// for updates.
     fn status_line(&mut self, ui: &mut egui::Ui) {
         match &self.notice {
             Some(Notice::Info(text)) => widgets::status(ui, Status::Ok, text),
             Some(Notice::Error(text)) => widgets::status(ui, Status::Error, text),
             None => {
-                if self.checking.is_some() {
-                    ui.spinner();
-                    ui.label("Checking GitHub for updates…");
-                } else if let Some(problem) = &self.problem {
-                    ui.label(format!("Could not check for updates: {problem}."));
-                } else if self.online == Some(true) {
-                    ui.label("Checked GitHub for updates.");
+                let words = if self.checking.is_some() {
+                    "Checking for updates.".to_string()
+                } else if self.problem.is_some() {
+                    "The launcher could not reach GitHub. Play still works.".to_string()
+                } else if let Some(at) = self.checked_at {
+                    checked_ago(at.elapsed().as_secs() / 60)
                 } else {
-                    ui.label("Not checked for updates yet.");
-                }
+                    "The launcher has not checked for updates yet.".to_string()
+                };
+                ui.label(widgets::text(words, Text::Label, theme::INK_MUTED));
             }
         }
-        if self.notice.is_some() && ui.small_button("✕").clicked() {
+        if self.notice.is_some() && widgets::text_button(ui, "Dismiss").clicked() {
             self.notice = None;
         }
     }
@@ -544,198 +568,175 @@ impl Ready {
     }
 
     fn play_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.add_space(8.0);
         self.progress(ui);
 
         let Some(current) = self.current().cloned() else {
-            ui.heading("kjk is not installed yet");
-            ui.label("kjk needs your own installs of KOTOR, Jedi Academy and KOTOR II; it finds them the first time it starts.");
-            ui.add_space(8.0);
-            self.install_folder(ui);
-            ui.add_space(8.0);
-            let newest = github::newest(&github::installable(
-                &self.releases,
-                self.config.prereleases,
-            ))
-            .cloned();
-            match newest {
-                Some(release) => {
-                    let button = egui::Button::new(widgets::text(
-                        format!("Install {}", release.tag_name),
-                        Text::Heading,
-                        theme::INK,
-                    ));
-                    if ui.add_enabled(self.job.is_none(), button).clicked() {
-                        self.start_install(ctx, release, true);
-                    }
-                    if ui.link("Pick another version…").clicked() {
-                        self.tab = Tab::Versions;
-                    }
-                }
-                None if self.checking.is_some() => {
-                    ui.label("Looking for releases…");
-                }
-                None => {
-                    ui.label("No release was found for this computer.");
-                }
-            }
+            self.nothing_installed(ui, ctx);
             return;
         };
 
-        if let Some(offer) = self.offer().filter(|_| !self.not_now) {
-            self.offer_box(ui, ctx, &current, offer);
-            ui.add_space(12.0);
-        }
-
         ui.horizontal(|ui| {
-            self.version_picker(ui, &current);
-            if current.prerelease {
-                ui.label(widgets::text("Pre-release", Text::Label, theme::INK_MUTED));
-            }
-            if self.config.pinned {
-                ui.label(widgets::text("Pinned", Text::Label, theme::INK_MUTED));
-            }
-        });
-        let released = if current.date().is_empty() {
-            "Installed".to_string()
-        } else {
-            format!("Released {}", current.date())
-        };
-        ui.label(RichText::new(released).weak())
-            .on_hover_text(current.dir.display().to_string());
-        ui.add_space(10.0);
-
-        ui.horizontal(|ui| {
-            if widgets::primary_button(ui, "Play").clicked() {
-                match launch::play(&self.paths, &mut self.config, &self.args) {
-                    Ok(_) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-                    Err(e) => self.notice = Some(Notice::Error(e)),
+            self.version_menu(ui, ctx, &current.tag);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if widgets::primary_button(ui, "Play").clicked() {
+                    match launch::play(&self.paths, &mut self.config, &self.args) {
+                        Ok(_) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                        Err(e) => self.notice = Some(Notice::Error(e)),
+                    }
                 }
-            }
-            if install::editor_exe(&current.dir).is_some() && ui.button("Save editor").clicked() {
-                if let Err(e) = launch::save_editor(&self.paths, &self.config) {
-                    self.notice = Some(Notice::Error(e));
-                }
-            }
-        });
-        if !self.config.launched.contains(&current.tag) && self.config.backup_before_new_version {
-            ui.label(
-                RichText::new(
-                    "This version has not started before; your saves are backed up first.",
-                )
-                .small()
-                .weak(),
-            );
-        }
-        ui.add_space(16.0);
-        self.install_folder(ui);
-    }
-
-    /// The drop-down of installed versions, each with an Uninstall button.
-    fn version_picker(&mut self, ui: &mut egui::Ui, current: &Installed) {
-        let mut chosen = None;
-        let mut uninstall = None;
-        let mut more = false;
-        egui::ComboBox::from_id_salt("version")
-            .selected_text(
-                RichText::new(format!("kjk {}", current.tag))
-                    .font(theme::font(Text::Heading))
-                    .strong(),
-            )
-            .width(260.0)
-            .show_ui(ui, |ui| {
-                ui.set_min_width(360.0);
-                for version in &self.installed {
-                    ui.horizontal(|ui| {
-                        let selected = version.tag == current.tag;
-                        let label = format!("{}   {}", version.tag, version.date());
-                        if ui.selectable_label(selected, label).clicked() && !selected {
-                            chosen = Some(version.tag.clone());
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("Uninstall").clicked() {
-                                uninstall = Some(version.tag.clone());
-                            }
-                            let size = self.sizes.get(&version.dir).copied().unwrap_or(0);
-                            ui.label(RichText::new(megabytes(size)).weak());
-                        });
-                    });
-                }
-                ui.separator();
-                if ui.button("Install another version…").clicked() {
-                    more = true;
+                if install::editor_exe(&current.dir).is_some()
+                    && widgets::secondary_button(ui, "Open the save editor").clicked()
+                {
+                    if let Err(e) = launch::save_editor(&self.paths, &self.config) {
+                        self.notice = Some(Notice::Error(e));
+                    }
                 }
             });
-        if let Some(tag) = chosen {
-            self.choose(tag);
+        });
+        if !self.config.launched.contains(&current.tag) && self.config.backup_before_new_version {
+            ui.label(widgets::text(
+                "This version has not started before. Your saves are backed up when it starts.",
+                Text::Body,
+                theme::INK_MUTED,
+            ));
         }
-        if let Some(tag) = uninstall {
-            self.confirm = Some(Confirm::Uninstall(tag));
-        }
-        if more {
-            self.tab = Tab::Versions;
+        ui.add_space(theme::SPACE_6);
+
+        if let Some(offer) = self.offer().filter(|_| !self.not_now) {
+            self.offer_box(ui, ctx, offer);
+            ui.add_space(theme::SPACE_6);
         }
     }
 
-    fn offer_box(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &egui::Context,
-        current: &Installed,
-        offer: Release,
-    ) {
-        let on_disk = self.installed.iter().any(|i| i.tag == offer.tag_name);
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            if on_disk {
-                ui.label(
-                    RichText::new(format!("kjk {} is already installed (you play {})", offer.tag_name, current.tag))
-                        .font(theme::font(Text::Heading))
-                        .strong(),
-                );
-                ui.label("Switch to it here or in the version list below; nothing needs to be downloaded.");
-            } else {
-                ui.label(
-                    RichText::new(format!("kjk {} is available (you have {})", offer.tag_name, current.tag))
-                        .font(theme::font(Text::Heading))
-                        .strong(),
-                );
-                ui.label(format!(
-                    "Released {}. Nothing changes unless you update; {} stays installed so you can go back.",
-                    offer.date(),
-                    current.tag
-                ));
-            }
-            egui::CollapsingHeader::new("What's new")
-                .id_salt(("notes", &offer.tag_name))
-                .default_open(!on_disk)
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("offer-notes")
-                        .max_height(150.0)
-                        .show(ui, |ui| ui.label(offer.notes()));
+    /// The Play page before any version is installed.
+    fn nothing_installed(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.label(widgets::text(
+            "kjk is not installed yet",
+            Text::Display,
+            theme::INK,
+        ));
+        ui.label(widgets::text(
+            "kjk needs your own copies of KOTOR, KOTOR II and Jedi Academy. It finds them the first time it starts.",
+            Text::Body,
+            theme::INK_MUTED,
+        ));
+        ui.add_space(theme::SPACE_4);
+        let newest = github::newest(&github::installable(
+            &self.releases,
+            self.config.prereleases,
+        ))
+        .cloned();
+        match newest {
+            Some(release) => {
+                ui.horizontal(|ui| {
+                    let label = format!("Install {}", versions::title(&release.tag_name));
+                    if widgets::primary_button(ui, &label).clicked() && self.job.is_none() {
+                        self.start_install(ctx, release, true);
+                    }
+                    if widgets::secondary_button(ui, "Show all versions").clicked() {
+                        self.tab = Tab::Versions;
+                    }
                 });
-            ui.horizontal(|ui| {
-                if on_disk {
-                    let switch = egui::Button::new(RichText::new(format!("Switch to {}", offer.tag_name)).strong());
-                    if ui.add(switch).clicked() {
-                        self.choose(offer.tag_name.clone());
-                    }
+            }
+            None => {
+                let words = if self.checking.is_some() {
+                    "The launcher is looking for releases."
                 } else {
-                    let busy = self.job.is_some();
-                    if ui.add_enabled(!busy, egui::Button::new(RichText::new("Update").strong())).clicked() {
-                        self.start_install(ctx, offer.clone(), true);
-                    }
+                    "No release was found for this computer."
+                };
+                ui.label(widgets::text(words, Text::Body, theme::INK_MUTED));
+            }
+        }
+    }
+
+    /// The selected version as a title that opens the menu of releases and
+    /// pre-releases.
+    fn version_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, current: &str) {
+        let button = widgets::version_title(ui, &versions::title(current));
+        let menu = versions::menu(&self.releases, &self.installed, Some(current));
+        let mut picked = None;
+        let mut show_all = false;
+        let open = std::mem::take(&mut self.open_menu).then_some(egui::SetOpenCommand::Bool(true));
+        egui::Popup::from_toggle_button_response(&button)
+            .open_memory(open)
+            .frame(widgets::raised_frame())
+            .width(theme::MENU_WIDTH)
+            .align(egui::RectAlign::BOTTOM_START)
+            .show(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                egui::ScrollArea::vertical()
+                    .max_height(theme::MENU_HEIGHT)
+                    .show(ui, |ui| {
+                        for (label, rows) in [
+                            ("Releases", &menu.releases),
+                            ("Pre-releases", &menu.prereleases),
+                        ] {
+                            if rows.is_empty() {
+                                continue;
+                            }
+                            widgets::section_label(ui, label);
+                            for row in rows {
+                                let state = match (row.state, row.newest) {
+                                    (versions::State::Selected, _) => "Selected",
+                                    (versions::State::Installed, _) => "Installed",
+                                    (versions::State::NotInstalled, true) => {
+                                        "Newest. Not installed"
+                                    }
+                                    (versions::State::NotInstalled, false) => "Not installed",
+                                };
+                                if widgets::menu_row(ui, &row.tag, Text::Mono, state).clicked() {
+                                    picked = Some(row.clone());
+                                }
+                            }
+                            ui.add_space(theme::SPACE_2);
+                        }
+                    });
+                widgets::hairline(ui);
+                if widgets::menu_row(ui, "Show all versions", Text::Body, "").clicked() {
+                    show_all = true;
                 }
-                if ui.button("Skip this version").clicked() {
+            });
+        if show_all {
+            self.tab = Tab::Versions;
+        }
+        match picked {
+            Some(row) if row.state == versions::State::NotInstalled => {
+                if let Some(release) = self.releases.iter().find(|r| r.tag_name == row.tag) {
+                    self.start_install(ctx, release.clone(), true);
+                }
+            }
+            Some(row) if row.state == versions::State::Installed => self.choose(row.tag),
+            _ => {}
+        }
+    }
+
+    /// The notice of a newer version.
+    fn offer_box(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, offer: Release) {
+        let version = versions::title(&offer.tag_name);
+        widgets::panel(ui, |ui| {
+            ui.label(widgets::text(
+                format!("{version} is available."),
+                Text::Heading,
+                theme::INK,
+            ));
+            ui.label(widgets::text(
+                "Your saves are backed up before the new version starts for the first time.",
+                Text::Body,
+                theme::INK_MUTED,
+            ));
+            ui.add_space(theme::SPACE_3);
+            ui.horizontal(|ui| {
+                if !offer.html_url.is_empty()
+                    && widgets::secondary_button(ui, "Release notes").clicked()
+                {
+                    ctx.open_url(egui::OpenUrl::new_tab(&offer.html_url));
+                }
+                if widgets::secondary_button(ui, "Skip this version").clicked() {
                     self.config.skipped = Some(offer.tag_name.clone());
                     self.save();
                 }
-                if ui.button("Not now").clicked() {
-                    self.not_now = true;
-                }
-                if !offer.html_url.is_empty() {
-                    ui.hyperlink_to("On GitHub", &offer.html_url);
+                if widgets::secondary_button(ui, "Update").clicked() && self.job.is_none() {
+                    self.start_install(ctx, offer.clone(), true);
                 }
             });
         });

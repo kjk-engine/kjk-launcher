@@ -2,7 +2,7 @@
 //! `KJK_LAUNCHER_SHOT=<file.png>` saves the window once it has drawn a few
 //! frames and nothing is loading, then closes it.
 //! `KJK_LAUNCHER_TAB=play|versions|backups|settings` picks the tab the
-//! window opens on.
+//! window opens on. `KJK_LAUNCHER_MENU=1` opens the version menu.
 
 use eframe::egui;
 use std::path::PathBuf;
@@ -58,4 +58,9 @@ pub fn tab() -> Option<String> {
     std::env::var("KJK_LAUNCHER_TAB")
         .ok()
         .map(|tab| tab.trim().to_ascii_lowercase())
+}
+
+/// Whether `KJK_LAUNCHER_MENU=1` asks for the version menu to be open.
+pub fn menu_open() -> bool {
+    std::env::var("KJK_LAUNCHER_MENU").is_ok_and(|v| v == "1")
 }

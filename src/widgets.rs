@@ -115,3 +115,81 @@ pub fn progress(ui: &mut egui::Ui, fraction: f32) {
     done.set_width(rect.width() * fraction.clamp(0.0, 1.0));
     painter.rect_filled(done, 0.0, theme::INK);
 }
+
+/// A `SURFACE_RAISED` frame with `RADIUS_LG` corners, for menus and dialogs.
+pub fn raised_frame() -> egui::Frame {
+    egui::Frame::new()
+        .fill(theme::SURFACE_RAISED)
+        .stroke(Stroke::new(theme::HAIRLINE, theme::LINE))
+        .corner_radius(CornerRadius::same(theme::RADIUS_LG))
+        .inner_margin(egui::Margin::same(theme::SPACE_3 as i8))
+}
+
+/// The version title in the display style with a chevron after it. A click
+/// opens the version menu.
+pub fn version_title(ui: &mut egui::Ui, title: &str) -> egui::Response {
+    let galley =
+        ui.painter()
+            .layout_no_wrap(title.to_string(), theme::font(Text::Display), theme::INK);
+    let gap = theme::SPACE_3;
+    let size = galley.size() + egui::vec2(gap + theme::CHEVRON, 0.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let painter = ui.painter();
+    painter.galley(rect.left_top(), galley, theme::INK);
+    let half = theme::CHEVRON / 2.0;
+    let middle = egui::pos2(rect.right() - half, rect.center().y);
+    let stroke = Stroke::new(theme::FOCUS_WIDTH, theme::INK);
+    painter.line_segment(
+        [
+            middle + egui::vec2(-half, -half / 2.0),
+            middle + egui::vec2(0.0, half / 2.0),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            middle + egui::vec2(0.0, half / 2.0),
+            middle + egui::vec2(half, -half / 2.0),
+        ],
+        stroke,
+    );
+    if response.has_focus() {
+        let gap = theme::FOCUS_GAP + theme::FOCUS_WIDTH / 2.0;
+        painter.rect_stroke(
+            rect.expand(gap),
+            CornerRadius::same(theme::RADIUS_MD),
+            stroke,
+            egui::StrokeKind::Middle,
+        );
+    }
+    response
+}
+
+/// A row of a menu: words on the left in `style` (a tag in the mono style)
+/// and a state word on the right. The row is highlighted under the pointer.
+pub fn menu_row(ui: &mut egui::Ui, left: &str, style: Text, state: &str) -> egui::Response {
+    let width = ui.available_width();
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width, theme::ROW), egui::Sense::click());
+    let painter = ui.painter();
+    if response.hovered() || response.has_focus() {
+        painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_SM), theme::LINE);
+    }
+    let inset = rect.shrink2(egui::vec2(theme::SPACE_2, 0.0));
+    painter.text(
+        inset.left_center(),
+        egui::Align2::LEFT_CENTER,
+        left,
+        theme::font(style),
+        theme::INK,
+    );
+    painter.text(
+        inset.right_center(),
+        egui::Align2::RIGHT_CENTER,
+        state,
+        theme::font(Text::Label),
+        theme::INK_MUTED,
+    );
+    response
+}

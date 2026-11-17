@@ -132,7 +132,15 @@ pub fn agent(timeout: Option<Duration>) -> ureq::Agent {
 /// Asks GitHub for the releases; falls back to the cache when offline.
 pub fn fetch(paths: &Paths) -> Releases {
     let cache = read_cache(paths);
-    match fetch_network(&cache) {
+    // KJK_LAUNCHER_OFFLINE=1 acts as if GitHub could not be reached, to
+    // check the launcher without a network.
+    let offline = std::env::var("KJK_LAUNCHER_OFFLINE").is_ok_and(|v| v == "1");
+    let answer = if offline {
+        Err("offline (KJK_LAUNCHER_OFFLINE)".to_string())
+    } else {
+        fetch_network(&cache)
+    };
+    match answer {
         Ok(Some((etag, list))) => {
             let fresh = Cache {
                 etag,
