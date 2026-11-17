@@ -7,6 +7,9 @@ use std::path::{Path, PathBuf};
 /// The GitHub repository whose releases are installed.
 pub const REPO: &str = "kjk-engine/kjk";
 
+/// The GitHub repository of the launcher's own releases.
+pub const LAUNCHER_REPO: &str = "kjk-engine/kjk-launcher";
+
 pub const USER_AGENT: &str = concat!("kjk-launcher/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -84,6 +87,8 @@ pub struct Paths {
     pub downloads: PathBuf,
     pub config_file: PathBuf,
     pub cache_file: PathBuf,
+    /// The launcher's own release list, cached like kjk's.
+    pub launcher_cache_file: PathBuf,
     /// kjk's own folder: settings, saves, logs. Found the way kjk finds it
     /// (`store::kjk_folder`): `%APPDATA%\kjk`, `~/Library/Application
     /// Support/kjk`, or `$XDG_CONFIG_HOME/kjk`.
@@ -111,6 +116,7 @@ impl Paths {
             downloads: root.join("downloads"),
             config_file: root.join("launcher.json"),
             cache_file: root.join("releases-cache.json"),
+            launcher_cache_file: root.join("launcher-releases-cache.json"),
             kjk_data: kjk_folder(),
             root,
         }
