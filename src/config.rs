@@ -29,9 +29,6 @@ pub struct Config {
     pub check_on_start: bool,
     /// Zip kjk's saves and settings before a version's first start.
     pub backup_before_new_version: bool,
-    /// Installed versions kept after an update (the current one always
-    /// is); 0 keeps them all.
-    pub keep_versions: usize,
     /// Backups kept; older ones are deleted.
     pub keep_backups: usize,
     /// Versions that have been started at least once.
@@ -48,7 +45,6 @@ impl Default for Config {
             skipped: None,
             check_on_start: true,
             backup_before_new_version: true,
-            keep_versions: 3,
             keep_backups: 10,
             launched: Vec::new(),
         }

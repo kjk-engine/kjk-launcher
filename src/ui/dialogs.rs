@@ -95,6 +95,21 @@ impl Ready {
                 }
                 ("Uninstall a version", text, "Uninstall", None)
             }
+            Confirm::DeleteOlder => {
+                let older = install::older(&self.paths, &self.config);
+                let size: u64 = older.iter().filter_map(|i| self.sizes.get(&i.dir)).sum();
+                let mut text = vec![format!(
+                    "{} older {} deleted from this computer. This frees {}.",
+                    older.len(),
+                    if older.len() == 1 { "version is" } else { "versions are" },
+                    megabytes(size)
+                )];
+                if let Some(current) = &self.config.current {
+                    text.push(format!("{} stays installed.", crate::versions::title(current)));
+                }
+                text.push("Your saves are not touched.".to_string());
+                ("Delete older versions", text, "Delete", None)
+            }
             Confirm::UseOlder(tag) => (
                 "Go back to an older version",
                 vec![
@@ -182,6 +197,15 @@ impl Ready {
                     Ok(()) => self.notice = Some(Notice::Info(format!("Uninstalled {tag}."))),
                     Err(e) => self.notice = Some(Notice::Error(e)),
                 }
+                self.save();
+            }
+            Confirm::DeleteOlder => {
+                let removed = install::delete_older(&self.paths, &self.config);
+                self.notice = Some(Notice::Info(match removed.len() {
+                    0 => "No version was deleted. Close kjk and try again.".to_string(),
+                    1 => "Deleted 1 older version.".to_string(),
+                    n => format!("Deleted {n} older versions."),
+                }));
                 self.save();
             }
             Confirm::UseOlder(tag) => {

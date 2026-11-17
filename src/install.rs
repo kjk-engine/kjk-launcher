@@ -477,28 +477,25 @@ fn delete_folder(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Removes the oldest versions beyond `keep_versions` (0 keeps all),
-/// never the current one nor one unzipped by hand.
-pub fn prune(paths: &Paths, config: &Config) -> Vec<String> {
-    if config.keep_versions == 0 {
-        return Vec::new();
-    }
-    let mut kept = 0;
-    let mut removed = Vec::new();
-    for version in installed(paths) {
-        if version.adopted || config.current.as_deref() == Some(version.tag.as_str()) {
-            kept += 1;
-            continue;
-        }
-        if kept < config.keep_versions {
-            kept += 1;
-            continue;
-        }
-        if delete_folder(&version.dir).is_ok() {
-            removed.push(version.tag);
-        }
-    }
-    removed
+/// The installed versions other than the selected one, which "Delete older
+/// versions" removes. A version unzipped by hand is never one of them.
+pub fn older(paths: &Paths, config: &Config) -> Vec<Installed> {
+    installed(paths)
+        .into_iter()
+        .filter(|version| {
+            !version.adopted && config.current.as_deref() != Some(version.tag.as_str())
+        })
+        .collect()
+}
+
+/// Uninstalls every version `older` lists and returns the tags it removed.
+/// A version that is running stays, because its folder cannot be renamed.
+pub fn delete_older(paths: &Paths, config: &Config) -> Vec<String> {
+    older(paths, config)
+        .into_iter()
+        .filter(|version| delete_folder(&version.dir).is_ok())
+        .map(|version| version.tag)
+        .collect()
 }
 
 /// What moving the installs to another folder did.
