@@ -29,19 +29,25 @@ pub fn create(paths: &Paths, label: &str) -> Result<Option<PathBuf>, String> {
     if saves.is_none() && settings.is_none() {
         return Ok(None);
     }
-    let out = paths.backups.join(format!("{}_{}.zip", stamp(), file_safe(label)));
+    let out = paths
+        .backups
+        .join(format!("{}_{}.zip", stamp(), file_safe(label)));
     let part = out.with_extension("zip.part");
     let written = (|| -> Result<(), String> {
         let file = File::create(&part).map_err(|e| format!("{}: {e}", part.display()))?;
         let mut zip = zip::ZipWriter::new(BufWriter::new(file));
-        let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
         if let Some(settings) = &settings {
-            zip.start_file("settings.json", options).map_err(|e| e.to_string())?;
-            let mut source = File::open(settings).map_err(|e| format!("{}: {e}", settings.display()))?;
+            zip.start_file("settings.json", options)
+                .map_err(|e| e.to_string())?;
+            let mut source =
+                File::open(settings).map_err(|e| format!("{}: {e}", settings.display()))?;
             io::copy(&mut source, &mut zip).map_err(|e| e.to_string())?;
         }
         if let Some(saves) = &saves {
-            zip.add_directory("saves/", options).map_err(|e| e.to_string())?;
+            zip.add_directory("saves/", options)
+                .map_err(|e| e.to_string())?;
             add_folder(&mut zip, saves, "saves", options)?;
         }
         zip.finish().map_err(|e| e.to_string())?;
@@ -69,9 +75,12 @@ fn add_folder<W: io::Write + io::Seek>(
     for entry in entries {
         let name = format!("{prefix}/{}", entry.file_name().to_string_lossy());
         let path = entry.path();
-        let kind = entry.file_type().map_err(|e| format!("{}: {e}", path.display()))?;
+        let kind = entry
+            .file_type()
+            .map_err(|e| format!("{}: {e}", path.display()))?;
         if kind.is_dir() {
-            zip.add_directory(format!("{name}/"), options).map_err(|e| e.to_string())?;
+            zip.add_directory(format!("{name}/"), options)
+                .map_err(|e| e.to_string())?;
             add_folder(zip, &path, &name, options)?;
         } else if kind.is_file() {
             zip.start_file(name, options).map_err(|e| e.to_string())?;
@@ -116,7 +125,9 @@ pub fn restore(paths: &Paths, backup: &Path) -> Result<Option<PathBuf>, String> 
     if crate::launch::kjk_running() {
         return Err("close kjk (and the save editor) before restoring".into());
     }
-    let saves = paths.saves().ok_or("could not tell where kjk's saves are")?;
+    let saves = paths
+        .saves()
+        .ok_or("could not tell where kjk's saves are")?;
     let file = File::open(backup).map_err(|e| format!("{}: {e}", backup.display()))?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("{}: {e}", backup.display()))?;
 
@@ -130,14 +141,18 @@ pub fn restore(paths: &Paths, backup: &Path) -> Result<Option<PathBuf>, String> 
     let mut has_saves = false;
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
-        let Some(name) = entry.enclosed_name() else { continue };
+        let Some(name) = entry.enclosed_name() else {
+            continue;
+        };
         if name == Path::new("settings.json") {
             let mut bytes = Vec::new();
             entry.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
             settings = Some(bytes);
             continue;
         }
-        let Ok(relative) = name.strip_prefix("saves") else { continue };
+        let Ok(relative) = name.strip_prefix("saves") else {
+            continue;
+        };
         has_saves = true;
         let out = staging.join(relative);
         if entry.is_dir() {
@@ -154,7 +169,8 @@ pub fn restore(paths: &Paths, backup: &Path) -> Result<Option<PathBuf>, String> 
     if has_saves {
         if saves.exists() {
             let old = saves.with_file_name(format!("{}.old-{}", file_name(&saves), stamp()));
-            fs::rename(&saves, &old).map_err(|e| format!("could not move the present saves aside: {e}"))?;
+            fs::rename(&saves, &old)
+                .map_err(|e| format!("could not move the present saves aside: {e}"))?;
             let _ = fs::remove_dir_all(&old);
         }
         fs::rename(&staging, &saves).map_err(|e| format!("{}: {e}", saves.display()))?;
@@ -169,5 +185,6 @@ pub fn restore(paths: &Paths, backup: &Path) -> Result<Option<PathBuf>, String> 
 }
 
 fn file_name(path: &Path) -> String {
-    path.file_name().map_or_else(|| "saves".into(), |n| n.to_string_lossy().into_owned())
+    path.file_name()
+        .map_or_else(|| "saves".into(), |n| n.to_string_lossy().into_owned())
 }

@@ -53,7 +53,10 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
             if install::find(&paths, &release.tag_name).is_some() {
                 config.current = Some(release.tag_name.clone());
                 config.save(&paths)?;
-                println!("{} is already installed; Play starts it from now on", release.tag_name);
+                println!(
+                    "{} is already installed; Play starts it from now on",
+                    release.tag_name
+                );
                 return Ok(());
             }
             let installed = install_with_progress(&paths, &release)?;
@@ -77,7 +80,10 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
             let tag = arg.ok_or("which version?")?;
             install::remove(&paths, &mut config, tag)?;
             config.save(&paths)?;
-            println!("uninstalled {tag}; Play starts {}", config.current.as_deref().unwrap_or("nothing"));
+            println!(
+                "uninstalled {tag}; Play starts {}",
+                config.current.as_deref().unwrap_or("nothing")
+            );
             Ok(())
         }
         "folder" => {
@@ -88,7 +94,10 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
             let to = std::path::PathBuf::from(to);
             let versions = install::installed(&paths);
             if let Some(inside) = versions.iter().find(|v| to.starts_with(&v.dir)) {
-                return Err(format!("that folder is inside the install of {}", inside.tag));
+                return Err(format!(
+                    "that folder is inside the install of {}",
+                    inside.tag
+                ));
             }
             let moved = install::move_installs(&versions, &to, &Progress::default());
             for problem in &moved.problems {
@@ -97,7 +106,11 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
             config.install_dir = Some(to);
             config.save(&paths)?;
             paths.use_install_dir(&config)?;
-            println!("moved {} version(s); installing into {} from now on", moved.moved, paths.versions.display());
+            println!(
+                "moved {} version(s); installing into {} from now on",
+                moved.moved,
+                paths.versions.display()
+            );
             Ok(())
         }
         "play" => {
@@ -150,8 +163,12 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
                     config.background_credit = None;
                 }
                 Some(file) => {
-                    config.background = Some(crate::config::import_background(&paths, std::path::Path::new(file))?);
-                    config.background_credit = args.get(2).cloned().filter(|c| !c.trim().is_empty());
+                    config.background = Some(crate::config::import_background(
+                        &paths,
+                        std::path::Path::new(file),
+                    )?);
+                    config.background_credit =
+                        args.get(2).cloned().filter(|c| !c.trim().is_empty());
                 }
             }
             config.save(&paths)
@@ -187,12 +204,23 @@ fn status(paths: &Paths, config: &Config) -> Result<(), String> {
         Some(dir) => println!("kjk's folder:    {}", dir.display()),
         None => println!("kjk's folder:    (unknown)"),
     }
-    println!("current:         {}", config.current.as_deref().unwrap_or("(none)"));
+    println!(
+        "current:         {}",
+        config.current.as_deref().unwrap_or("(none)")
+    );
     println!("pinned:          {}", config.pinned);
     println!("pre-releases:    {}", config.prereleases);
     for version in &installed {
-        let note = if version.adopted { "found in the folder" } else { version.date() };
-        println!("  installed {} ({note}) in {}", version.tag, version.dir.display());
+        let note = if version.adopted {
+            "found in the folder"
+        } else {
+            version.date()
+        };
+        println!(
+            "  installed {} ({note}) in {}",
+            version.tag,
+            version.dir.display()
+        );
     }
     let releases = github::fetch(paths);
     if let Some(problem) = &releases.problem {
@@ -227,7 +255,12 @@ fn list(paths: &Paths, config: &Config) -> Result<(), String> {
         if config.current.as_deref() == Some(release.tag_name.as_str()) {
             marks.push("current");
         }
-        println!("{:<45} {}  {}", release.tag_name, release.date(), marks.join(", "));
+        println!(
+            "{:<45} {}  {}",
+            release.tag_name,
+            release.date(),
+            marks.join(", ")
+        );
     }
     Ok(())
 }
@@ -241,10 +274,16 @@ fn install_with_progress(paths: &Paths, release: &Release) -> Result<install::In
     while !worker.is_finished() {
         let (stage, done, total) = progress.snapshot();
         let percent = (done * 100).checked_div(total).unwrap_or(0);
-        eprint!("\r{stage}: {:.1} / {:.1} MB ({percent}%)   ", done as f64 / 1e6, total as f64 / 1e6);
+        eprint!(
+            "\r{stage}: {:.1} / {:.1} MB ({percent}%)   ",
+            done as f64 / 1e6,
+            total as f64 / 1e6
+        );
         let _ = std::io::stderr().flush();
         std::thread::sleep(Duration::from_millis(250));
     }
     eprintln!();
-    worker.join().map_err(|_| "the installer stopped unexpectedly".to_string())?
+    worker
+        .join()
+        .map_err(|_| "the installer stopped unexpectedly".to_string())?
 }

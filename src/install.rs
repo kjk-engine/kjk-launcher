@@ -46,7 +46,9 @@ const REMOVING: &str = ".removing";
 
 /// A version's folder name: `0.19.0` for `v0.19.0`; other tags as they are.
 pub fn folder_for(tag: &str) -> String {
-    let bare = tag.strip_prefix('v').filter(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
+    let bare = tag
+        .strip_prefix('v')
+        .filter(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
     file_safe(bare.unwrap_or(tag))
 }
 
@@ -94,7 +96,14 @@ pub fn installed(paths: &Paths) -> Vec<Installed> {
             }
         })
         .collect();
-    found.sort_by(|a, b| compare(&b.tag, b.published_at.as_deref(), &a.tag, a.published_at.as_deref()));
+    found.sort_by(|a, b| {
+        compare(
+            &b.tag,
+            b.published_at.as_deref(),
+            &a.tag,
+            a.published_at.as_deref(),
+        )
+    });
     found.dedup_by(|a, b| a.tag == b.tag);
     found
 }
@@ -114,7 +123,11 @@ pub fn dir_size(dir: &Path) -> u64 {
 
 /// Deletes what is left of earlier uninstalls that could not finish.
 pub fn clean_leftovers(paths: &Paths) {
-    for entry in fs::read_dir(&paths.versions).into_iter().flatten().flatten() {
+    for entry in fs::read_dir(&paths.versions)
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
         if entry.file_name().to_string_lossy().ends_with(REMOVING) {
             let _ = fs::remove_dir_all(entry.path());
         }
@@ -171,7 +184,9 @@ impl Progress {
 }
 
 pub fn install(paths: &Paths, release: &Release, progress: &Progress) -> Result<Installed, String> {
-    let package = release.package().ok_or("this release has no package for this computer")?;
+    let package = release
+        .package()
+        .ok_or("this release has no package for this computer")?;
     let sums = release
         .sums()
         .ok_or("this release has no SHA256SUMS, so its download cannot be checked")?;
@@ -228,8 +243,12 @@ pub fn install(paths: &Paths, release: &Release, progress: &Progress) -> Result<
         let json = serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?;
         write_atomic(&staging.join(META), &json)?;
         if target.exists() {
-            fs::remove_dir_all(&target)
-                .map_err(|e| format!("could not replace {} (is it running?): {e}", target.display()))?;
+            fs::remove_dir_all(&target).map_err(|e| {
+                format!(
+                    "could not replace {} (is it running?): {e}",
+                    target.display()
+                )
+            })?;
         }
         fs::rename(&staging, &target).map_err(|e| format!("{}: {e}", target.display()))?;
         Ok(meta)
@@ -259,7 +278,10 @@ fn get_text(url: &str) -> Result<String, String> {
     if response.status().as_u16() != 200 {
         return Err(format!("{url} answered {}", response.status()));
     }
-    response.body_mut().read_to_string().map_err(|e| format!("{url}: {e}"))
+    response
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| format!("{url}: {e}"))
 }
 
 /// Downloads `url` to `to` and returns the file's SHA-256 in hex.
@@ -288,23 +310,32 @@ fn download(url: &str, to: &Path, size: u64, progress: &Progress) -> Result<Stri
         if progress.cancel.load(Ordering::Relaxed) {
             return Err("cancelled".into());
         }
-        let n = reader.read(&mut buffer).map_err(|e| format!("download interrupted ({e})"))?;
+        let n = reader
+            .read(&mut buffer)
+            .map_err(|e| format!("download interrupted ({e})"))?;
         if n == 0 {
             break;
         }
         hasher.update(&buffer[..n]);
-        file.write_all(&buffer[..n]).map_err(|e| format!("{}: {e}", to.display()))?;
+        file.write_all(&buffer[..n])
+            .map_err(|e| format!("{}: {e}", to.display()))?;
         progress.done.fetch_add(n as u64, Ordering::Relaxed);
     }
     file.flush().map_err(|e| format!("{}: {e}", to.display()))?;
-    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
 }
 
 /// Whether every path sits in one top folder (kjk's packages do:
 /// `kjk-v0.19.0-windows-x86_64/kjk.exe`), which is then left out.
 fn single_top(paths: &[PathBuf]) -> bool {
     let mut tops = paths.iter().filter_map(|p| p.components().next());
-    let Some(first) = tops.next() else { return false };
+    let Some(first) = tops.next() else {
+        return false;
+    };
     tops.all(|top| top == first) && paths.iter().any(|p| p.components().count() > 1)
 }
 
@@ -317,7 +348,8 @@ fn strip_top(path: &Path) -> Option<PathBuf> {
 
 /// A relative path with no `..`, root or drive in it.
 fn safe(path: &Path) -> bool {
-    path.components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+    path.components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
 }
 
 fn unzip(archive: &Path, dest: &Path) -> Result<(), String> {
@@ -332,9 +364,12 @@ fn unzip(archive: &Path, dest: &Path) -> Result<(), String> {
     let strip = single_top(&names);
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
-        let name = entry
-            .enclosed_name()
-            .ok_or_else(|| format!("the package has an unsafe path: {}", entry.name().unwrap_or_default()))?;
+        let name = entry.enclosed_name().ok_or_else(|| {
+            format!(
+                "the package has an unsafe path: {}",
+                entry.name().unwrap_or_default()
+            )
+        })?;
         let relative = if strip { strip_top(&name) } else { Some(name) };
         let Some(relative) = relative else { continue };
         let out = dest.join(relative);
@@ -372,7 +407,10 @@ fn untar_gz(archive: &Path, dest: &Path) -> Result<(), String> {
         let mut entry = entry.map_err(|e| e.to_string())?;
         let name = entry.path().map_err(|e| e.to_string())?.into_owned();
         if !safe(&name) {
-            return Err(format!("the package has an unsafe path: {}", name.display()));
+            return Err(format!(
+                "the package has an unsafe path: {}",
+                name.display()
+            ));
         }
         let relative = if strip { strip_top(&name) } else { Some(name) };
         let Some(relative) = relative else { continue };
@@ -380,7 +418,9 @@ fn untar_gz(archive: &Path, dest: &Path) -> Result<(), String> {
         if let Some(parent) = out.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
         }
-        entry.unpack(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+        entry
+            .unpack(&out)
+            .map_err(|e| format!("{}: {e}", out.display()))?;
     }
     Ok(())
 }
@@ -390,7 +430,8 @@ fn untar_gz(archive: &Path, dest: &Path) -> Result<(), String> {
 /// When it was the current version, the newest one left becomes current.
 pub fn remove(paths: &Paths, config: &mut Config, tag: &str) -> Result<(), String> {
     let version = find(paths, tag).ok_or_else(|| format!("{tag} is not installed"))?;
-    delete_folder(&version.dir).map_err(|e| format!("could not uninstall {tag} (is it running?): {e}"))?;
+    delete_folder(&version.dir)
+        .map_err(|e| format!("could not uninstall {tag} (is it running?): {e}"))?;
     if config.current.as_deref() == Some(tag) {
         config.current = installed(paths).first().map(|i| i.tag.clone());
     }
@@ -440,7 +481,10 @@ pub struct Moved {
 /// same drive, else copied and then deleted). A version already in `to`
 /// is left where it is.
 pub fn move_installs(versions: &[Installed], to: &Path, progress: &Progress) -> Moved {
-    let mut result = Moved { moved: 0, problems: Vec::new() };
+    let mut result = Moved {
+        moved: 0,
+        problems: Vec::new(),
+    };
     if let Err(e) = fs::create_dir_all(to) {
         result.problems.push(format!("{}: {e}", to.display()));
         return result;
@@ -449,11 +493,21 @@ pub fn move_installs(versions: &[Installed], to: &Path, progress: &Progress) -> 
     progress.total.store(sizes.iter().sum(), Ordering::Relaxed);
     progress.done.store(0, Ordering::Relaxed);
     for (i, (version, size)) in versions.iter().zip(&sizes).enumerate() {
-        progress.stage(format!("Moving {} ({} of {})", version.tag, i + 1, versions.len()));
-        let Some(name) = version.dir.file_name() else { continue };
+        progress.stage(format!(
+            "Moving {} ({} of {})",
+            version.tag,
+            i + 1,
+            versions.len()
+        ));
+        let Some(name) = version.dir.file_name() else {
+            continue;
+        };
         let target = to.join(name);
         if target.exists() {
-            result.problems.push(format!("{} is already in the new folder; left the old copy", version.tag));
+            result.problems.push(format!(
+                "{} is already in the new folder; left the old copy",
+                version.tag
+            ));
             progress.done.fetch_add(*size, Ordering::Relaxed);
             continue;
         }
@@ -470,9 +524,14 @@ pub fn move_installs(versions: &[Installed], to: &Path, progress: &Progress) -> 
         });
         match moved {
             Ok(()) => result.moved += 1,
-            Err(e) => result.problems.push(format!("could not move {} (is it running?): {e}", version.tag)),
+            Err(e) => result.problems.push(format!(
+                "could not move {} (is it running?): {e}",
+                version.tag
+            )),
         }
-        progress.done.store(sizes[..=i].iter().sum(), Ordering::Relaxed);
+        progress
+            .done
+            .store(sizes[..=i].iter().sum(), Ordering::Relaxed);
     }
     result
 }
@@ -499,7 +558,10 @@ mod tests {
     #[test]
     fn reads_sha256sums() {
         let sums = "10d6  kjk-v0.19.0-linux-x86_64.tar.gz\nA4C5  kjk-v0.19.0-windows-x86_64.zip\n";
-        assert_eq!(expected_hash(sums, "kjk-v0.19.0-windows-x86_64.zip").as_deref(), Some("a4c5"));
+        assert_eq!(
+            expected_hash(sums, "kjk-v0.19.0-windows-x86_64.zip").as_deref(),
+            Some("a4c5")
+        );
         assert_eq!(expected_hash(sums, "other.zip"), None);
     }
 
@@ -507,8 +569,14 @@ mod tests {
     fn strips_one_top_folder() {
         let names = vec![PathBuf::from("kjk-v1/"), PathBuf::from("kjk-v1/kjk.exe")];
         assert!(single_top(&names));
-        assert!(!single_top(&[PathBuf::from("kjk.exe"), PathBuf::from("README.txt")]));
-        assert_eq!(strip_top(Path::new("kjk-v1/kjk.exe")), Some(PathBuf::from("kjk.exe")));
+        assert!(!single_top(&[
+            PathBuf::from("kjk.exe"),
+            PathBuf::from("README.txt")
+        ]));
+        assert_eq!(
+            strip_top(Path::new("kjk-v1/kjk.exe")),
+            Some(PathBuf::from("kjk.exe"))
+        );
         assert!(!safe(Path::new("../evil")));
     }
 
@@ -516,10 +584,16 @@ mod tests {
     fn version_folders() {
         assert_eq!(folder_for("v0.19.0"), "0.19.0");
         assert_eq!(folder_for("v0.15.0-md-rc.1"), "0.15.0-md-rc.1");
-        assert_eq!(folder_for("pre-feat-x-v0.17.0-40-g6d6b576"), "pre-feat-x-v0.17.0-40-g6d6b576");
+        assert_eq!(
+            folder_for("pre-feat-x-v0.17.0-40-g6d6b576"),
+            "pre-feat-x-v0.17.0-40-g6d6b576"
+        );
         assert_eq!(tag_from_folder("0.18.0"), "v0.18.0");
         assert_eq!(tag_from_folder("v0.18.0"), "v0.18.0");
         let platform = github::package_suffix().split('.').next().unwrap();
-        assert_eq!(tag_from_folder(&format!("kjk-v0.18.0{platform}")), "v0.18.0");
+        assert_eq!(
+            tag_from_folder(&format!("kjk-v0.18.0{platform}")),
+            "v0.18.0"
+        );
     }
 }

@@ -49,7 +49,9 @@ pub fn package_suffix() -> &'static str {
 
 impl Release {
     pub fn package(&self) -> Option<&Asset> {
-        self.assets.iter().find(|a| a.name.ends_with(package_suffix()))
+        self.assets
+            .iter()
+            .find(|a| a.name.ends_with(package_suffix()))
     }
 
     pub fn sums(&self) -> Option<&Asset> {
@@ -61,7 +63,11 @@ impl Release {
     }
 
     pub fn notes(&self) -> &str {
-        self.body.as_deref().map(str::trim).filter(|b| !b.is_empty()).unwrap_or("(no release notes)")
+        self.body
+            .as_deref()
+            .map(str::trim)
+            .filter(|b| !b.is_empty())
+            .unwrap_or("(no release notes)")
     }
 }
 
@@ -75,7 +81,12 @@ pub fn semver(tag: &str) -> Option<Version> {
 
 /// Orders two versions by their numbers when both tags are version
 /// numbers, else by when they were published (`pre-<branch>-…` tags).
-pub fn compare(a_tag: &str, a_published: Option<&str>, b_tag: &str, b_published: Option<&str>) -> Ordering {
+pub fn compare(
+    a_tag: &str,
+    a_published: Option<&str>,
+    b_tag: &str,
+    b_published: Option<&str>,
+) -> Ordering {
     match (semver(a_tag), semver(b_tag)) {
         (Some(a), Some(b)) => a.cmp(&b),
         _ => a_published.unwrap_or("").cmp(b_published.unwrap_or("")),
@@ -123,14 +134,29 @@ pub fn fetch(paths: &Paths) -> Releases {
     let cache = read_cache(paths);
     match fetch_network(&cache) {
         Ok(Some((etag, list))) => {
-            let fresh = Cache { etag, releases: list };
+            let fresh = Cache {
+                etag,
+                releases: list,
+            };
             if let Ok(json) = serde_json::to_vec(&fresh) {
                 let _ = write_atomic(&paths.cache_file, &json);
             }
-            Releases { list: fresh.releases, online: true, problem: None }
+            Releases {
+                list: fresh.releases,
+                online: true,
+                problem: None,
+            }
         }
-        Ok(None) => Releases { list: cache.releases, online: true, problem: None },
-        Err(problem) => Releases { list: cache.releases, online: false, problem: Some(problem) },
+        Ok(None) => Releases {
+            list: cache.releases,
+            online: true,
+            problem: None,
+        },
+        Err(problem) => Releases {
+            list: cache.releases,
+            online: false,
+            problem: Some(problem),
+        },
     }
 }
 
@@ -151,7 +177,9 @@ fn fetch_network(cache: &Cache) -> Result<Fresh, String> {
     if let Ok(token) = std::env::var("KJK_LAUNCHER_GITHUB_TOKEN") {
         request = request.header("Authorization", &format!("Bearer {token}"));
     }
-    let mut response = request.call().map_err(|e| format!("could not reach GitHub ({e})"))?;
+    let mut response = request
+        .call()
+        .map_err(|e| format!("could not reach GitHub ({e})"))?;
     match response.status().as_u16() {
         304 => Ok(None),
         200 => {
@@ -166,8 +194,8 @@ fn fetch_network(cache: &Cache) -> Result<Fresh, String> {
                 .limit(64 * 1024 * 1024)
                 .read_to_string()
                 .map_err(|e| format!("could not read GitHub's answer ({e})"))?;
-            let list: Vec<Release> =
-                serde_json::from_str(&text).map_err(|e| format!("could not read GitHub's answer ({e})"))?;
+            let list: Vec<Release> = serde_json::from_str(&text)
+                .map_err(|e| format!("could not read GitHub's answer ({e})"))?;
             Ok(Some((etag, list)))
         }
         403 | 429 => Err("GitHub's rate limit was reached; try again in a while".into()),
@@ -187,13 +215,22 @@ pub fn installable(list: &[Release], prereleases: bool) -> Vec<&Release> {
 
 pub fn newest<'a>(list: &[&'a Release]) -> Option<&'a Release> {
     list.iter().copied().max_by(|a, b| {
-        compare(&a.tag_name, a.published_at.as_deref(), &b.tag_name, b.published_at.as_deref())
+        compare(
+            &a.tag_name,
+            a.published_at.as_deref(),
+            &b.tag_name,
+            b.published_at.as_deref(),
+        )
     })
 }
 
 /// The release to offer: the newest under the channel, when it is newer
 /// than `current` (tag, publish date), not skipped, and not pinned.
-pub fn offer<'a>(list: &'a [Release], config: &Config, current: Option<(&str, Option<&str>)>) -> Option<&'a Release> {
+pub fn offer<'a>(
+    list: &'a [Release],
+    config: &Config,
+    current: Option<(&str, Option<&str>)>,
+) -> Option<&'a Release> {
     if config.pinned {
         return None;
     }
@@ -204,7 +241,12 @@ pub fn offer<'a>(list: &'a [Release], config: &Config, current: Option<(&str, Op
     match current {
         None => Some(newest),
         Some((tag, published)) => {
-            let newer = compare(&newest.tag_name, newest.published_at.as_deref(), tag, published) == Ordering::Greater;
+            let newer = compare(
+                &newest.tag_name,
+                newest.published_at.as_deref(),
+                tag,
+                published,
+            ) == Ordering::Greater;
             newer.then_some(newest)
         }
     }
@@ -239,16 +281,32 @@ mod tests {
             release("v0.18.5", "2026-11-15T18:55:16Z", false),
         ];
         let mut config = Config::default();
-        let offered = offer(&list, &config, Some(("v0.18.5", Some("2026-11-15T18:55:16Z"))));
+        let offered = offer(
+            &list,
+            &config,
+            Some(("v0.18.5", Some("2026-11-15T18:55:16Z"))),
+        );
         assert_eq!(offered.map(|r| r.tag_name.as_str()), Some("v0.19.0"));
         assert!(offer(&list, &config, Some(("v0.19.0", None))).is_none());
 
         config.prereleases = true;
-        let offered = offer(&list, &config, Some(("v0.19.0", Some("2026-11-16T19:46:12Z"))));
-        assert_eq!(offered.map(|r| r.tag_name.as_str()), Some("pre-feat-x-v0.19.0-3-gabc"));
+        let offered = offer(
+            &list,
+            &config,
+            Some(("v0.19.0", Some("2026-11-16T19:46:12Z"))),
+        );
+        assert_eq!(
+            offered.map(|r| r.tag_name.as_str()),
+            Some("pre-feat-x-v0.19.0-3-gabc")
+        );
 
         config.skipped = Some("pre-feat-x-v0.19.0-3-gabc".into());
-        assert!(offer(&list, &config, Some(("v0.19.0", Some("2026-11-16T19:46:12Z")))).is_none());
+        assert!(offer(
+            &list,
+            &config,
+            Some(("v0.19.0", Some("2026-11-16T19:46:12Z")))
+        )
+        .is_none());
 
         config.skipped = None;
         config.pinned = true;
@@ -262,6 +320,9 @@ mod tests {
             compare("v0.18.6", Some("2026-11-18"), "v0.19.0", Some("2026-11-16")),
             Ordering::Less
         );
-        assert_eq!(compare("v0.19.0", None, "v0.19.0-rc.1", None), Ordering::Greater);
+        assert_eq!(
+            compare("v0.19.0", None, "v0.19.0-rc.1", None),
+            Ordering::Greater
+        );
     }
 }

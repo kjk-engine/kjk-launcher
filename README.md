@@ -5,6 +5,9 @@ for a newer release each time it opens and **offers** it. Nothing is
 updated until you click Update, so a run in progress or a mod that needs a
 certain version is never broken behind your back.
 
+Made by a community contributor. The kjk project maintains it from
+version 0.2.0 on. It is released under the MIT licence (see `LICENSE`).
+
 - **Update / Skip this version / Not now**, with the release notes shown.
 - **Versions side by side.** Each version gets its own folder; older ones
   stay installed (3 by default), so you can go back from the Versions tab.

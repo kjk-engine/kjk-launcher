@@ -38,7 +38,10 @@ pub fn save_editor(paths: &Paths, config: &Config) -> Result<(), String> {
 }
 
 fn current(paths: &Paths, config: &Config) -> Result<Installed, String> {
-    let tag = config.current.as_deref().ok_or("no version of kjk is installed yet")?;
+    let tag = config
+        .current
+        .as_deref()
+        .ok_or("no version of kjk is installed yet")?;
     install::find(paths, tag).ok_or_else(|| format!("{tag} is not installed any more"))
 }
 
@@ -62,7 +65,9 @@ fn start(dir: &Path, program: &Path, args: &[String]) -> Result<(), String> {
 /// Whether kjk or its save editor is running (from any folder).
 pub fn kjk_running() -> bool {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
-    let Ok(mut system) = System::new() else { return false };
+    let Ok(mut system) = System::new() else {
+        return false;
+    };
     system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
     system.processes().values().any(|process| {
         let name = process.name().to_string_lossy().to_ascii_lowercase();

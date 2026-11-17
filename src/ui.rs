@@ -42,8 +42,14 @@ enum Tab {
 }
 
 enum Outcome {
-    Installed { make_current: bool, result: Result<Installed, String> },
-    Moved { to: PathBuf, moved: Moved },
+    Installed {
+        make_current: bool,
+        result: Result<Installed, String>,
+    },
+    Moved {
+        to: PathBuf,
+        moved: Moved,
+    },
 }
 
 struct Job {
@@ -100,7 +106,10 @@ fn decode_picture(path: &std::path::Path) -> Result<egui::ColorImage, String> {
     };
     let rgba = picture.to_rgba8();
     let size = [rgba.width() as usize, rgba.height() as usize];
-    Ok(egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw()))
+    Ok(egui::ColorImage::from_rgba_unmultiplied(
+        size,
+        rgba.as_raw(),
+    ))
 }
 
 enum App {
@@ -177,7 +186,9 @@ impl Ready {
     fn load_banner(&mut self, ctx: &egui::Context) {
         self.banner = None;
         self.banner_loading = None;
-        let Some(path) = self.config.background.clone() else { return };
+        let Some(path) = self.config.background.clone() else {
+            return;
+        };
         let (tx, rx) = mpsc::channel();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
@@ -193,8 +204,14 @@ impl Ready {
         let Some(texture) = &self.banner else { return };
         let width = ui.available_width();
         // Smaller while an update is offered, so Play stays in view.
-        let share = if self.offer().is_some() && !self.not_now { 0.3 } else { 0.45 };
-        let height = (width * 0.42).min(ui.available_height() * share).clamp(120.0, 360.0);
+        let share = if self.offer().is_some() && !self.not_now {
+            0.3
+        } else {
+            0.45
+        };
+        let height = (width * 0.42)
+            .min(ui.available_height() * share)
+            .clamp(120.0, 360.0);
         let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
         let [w, h] = texture.size();
         let picture = w as f32 / h as f32;
@@ -212,7 +229,10 @@ impl Ready {
         painter.image(texture.id(), rect, uv, Color32::WHITE);
 
         let fill = ui.visuals().panel_fill;
-        let fade = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - height * 0.3), rect.max);
+        let fade = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), rect.bottom() - height * 0.3),
+            rect.max,
+        );
         let mut mesh = egui::Mesh::default();
         mesh.colored_vertex(fade.left_top(), Color32::TRANSPARENT);
         mesh.colored_vertex(fade.right_top(), Color32::TRANSPARENT);
@@ -226,8 +246,20 @@ impl Ready {
             let at = rect.right_top() + egui::vec2(-8.0, 6.0);
             let font = egui::FontId::proportional(11.0);
             let text = format!("Art: {credit}");
-            painter.text(at + egui::vec2(1.0, 1.0), egui::Align2::RIGHT_TOP, &text, font.clone(), Color32::from_black_alpha(200));
-            painter.text(at, egui::Align2::RIGHT_TOP, &text, font, Color32::from_white_alpha(210));
+            painter.text(
+                at + egui::vec2(1.0, 1.0),
+                egui::Align2::RIGHT_TOP,
+                &text,
+                font.clone(),
+                Color32::from_black_alpha(200),
+            );
+            painter.text(
+                at,
+                egui::Align2::RIGHT_TOP,
+                &text,
+                font,
+                Color32::from_white_alpha(210),
+            );
         }
     }
 
@@ -260,15 +292,27 @@ impl Ready {
     fn refresh(&mut self) {
         self.installed = install::installed(&self.paths);
         // A folder unzipped by hand has no date; GitHub's list knows it.
-        for version in self.installed.iter_mut().filter(|v| v.published_at.is_none()) {
+        for version in self
+            .installed
+            .iter_mut()
+            .filter(|v| v.published_at.is_none())
+        {
             if let Some(release) = self.releases.iter().find(|r| r.tag_name == version.tag) {
                 version.published_at = release.published_at.clone();
                 version.prerelease = release.prerelease;
             }
         }
-        self.sizes = self.installed.iter().map(|i| (i.dir.clone(), install::dir_size(&i.dir))).collect();
+        self.sizes = self
+            .installed
+            .iter()
+            .map(|i| (i.dir.clone(), install::dir_size(&i.dir)))
+            .collect();
         self.backups = backup::list(&self.paths);
-        let known = self.config.current.as_deref().is_some_and(|tag| self.installed.iter().any(|i| i.tag == tag));
+        let known = self
+            .config
+            .current
+            .as_deref()
+            .is_some_and(|tag| self.installed.iter().any(|i| i.tag == tag));
         if !known {
             let newest = self.installed.first().map(|i| i.tag.clone());
             if newest != self.config.current {
@@ -293,8 +337,12 @@ impl Ready {
     fn choose(&mut self, tag: String) {
         let older = match (self.current(), self.installed.iter().find(|i| i.tag == tag)) {
             (Some(now), Some(picked)) => {
-                github::compare(&picked.tag, picked.published_at.as_deref(), &now.tag, now.published_at.as_deref())
-                    == CmpOrdering::Less
+                github::compare(
+                    &picked.tag,
+                    picked.published_at.as_deref(),
+                    &now.tag,
+                    now.published_at.as_deref(),
+                ) == CmpOrdering::Less
             }
             _ => false,
         };
@@ -327,10 +375,18 @@ impl Ready {
         let title = format!("Installing {}", release.tag_name);
         std::thread::spawn(move || {
             let result = install::install(&paths, &release, &worker);
-            let _ = tx.send(Outcome::Installed { make_current, result });
+            let _ = tx.send(Outcome::Installed {
+                make_current,
+                result,
+            });
             ctx.request_repaint();
         });
-        self.job = Some(Job { title, progress, cancellable: true, done: rx });
+        self.job = Some(Job {
+            title,
+            progress,
+            cancellable: true,
+            done: rx,
+        });
     }
 
     fn start_move(&mut self, ctx: &egui::Context, to: PathBuf) {
@@ -344,7 +400,12 @@ impl Ready {
             let _ = tx.send(Outcome::Moved { to, moved });
             ctx.request_repaint();
         });
-        self.job = Some(Job { title: "Moving installed versions".into(), progress, cancellable: false, done: rx });
+        self.job = Some(Job {
+            title: "Moving installed versions".into(),
+            progress,
+            cancellable: false,
+            done: rx,
+        });
     }
 
     fn set_install_dir(&mut self, dir: PathBuf) {
@@ -387,9 +448,13 @@ impl Ready {
                 self.banner_loading = None;
                 match decoded {
                     Ok(picture) => {
-                        self.banner = Some(ctx.load_texture("banner", picture, egui::TextureOptions::LINEAR));
+                        self.banner =
+                            Some(ctx.load_texture("banner", picture, egui::TextureOptions::LINEAR));
                     }
-                    Err(e) => self.notice = Some(Notice::Error(format!("Could not show the picture: {e}"))),
+                    Err(e) => {
+                        self.notice =
+                            Some(Notice::Error(format!("Could not show the picture: {e}")))
+                    }
                 }
             }
         }
@@ -407,7 +472,10 @@ impl Ready {
         let Some(outcome) = finished else { return };
         self.job = None;
         match outcome {
-            Outcome::Installed { make_current, result: Ok(installed) } => {
+            Outcome::Installed {
+                make_current,
+                result: Ok(installed),
+            } => {
                 let mut text = format!("Installed {}.", installed.tag);
                 if make_current {
                     self.config.current = Some(installed.tag.clone());
@@ -417,7 +485,10 @@ impl Ready {
                 }
                 let removed = install::prune(&self.paths, &self.config);
                 if !removed.is_empty() {
-                    text.push_str(&format!(" Uninstalled old versions: {}.", removed.join(", ")));
+                    text.push_str(&format!(
+                        " Uninstalled old versions: {}.",
+                        removed.join(", ")
+                    ));
                 }
                 self.notice = Some(Notice::Info(text));
             }
@@ -429,7 +500,11 @@ impl Ready {
                 for problem in &moved.problems {
                     text.push_str(&format!(" {problem}."));
                 }
-                self.notice = Some(if moved.problems.is_empty() { Notice::Info(text) } else { Notice::Error(text) });
+                self.notice = Some(if moved.problems.is_empty() {
+                    Notice::Info(text)
+                } else {
+                    Notice::Error(text)
+                });
                 self.set_install_dir(to);
             }
         }
@@ -466,12 +541,14 @@ impl Ready {
             if self.tab == Tab::Play {
                 self.draw_banner(ui);
             }
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match self.tab {
-                Tab::Play => self.play_tab(ui, ctx),
-                Tab::Versions => self.versions_tab(ui, ctx),
-                Tab::Backups => self.backups_tab(ui),
-                Tab::Settings => self.settings_tab(ui, ctx),
-            });
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| match self.tab {
+                    Tab::Play => self.play_tab(ui, ctx),
+                    Tab::Versions => self.versions_tab(ui, ctx),
+                    Tab::Backups => self.backups_tab(ui),
+                    Tab::Settings => self.settings_tab(ui, ctx),
+                });
         });
 
         self.confirm_window(ctx);
@@ -509,11 +586,16 @@ impl Ready {
         ui.group(|ui| {
             ui.set_width(ui.available_width());
             ui.label(format!("{}: {stage}", job.title));
-            let fraction = if total > 0 { done as f32 / total as f32 } else { 0.0 };
-            ui.add(
-                egui::ProgressBar::new(fraction)
-                    .text(format!("{:.1} / {:.1} MB", done as f64 / 1e6, total as f64 / 1e6)),
-            );
+            let fraction = if total > 0 {
+                done as f32 / total as f32
+            } else {
+                0.0
+            };
+            ui.add(egui::ProgressBar::new(fraction).text(format!(
+                "{:.1} / {:.1} MB",
+                done as f64 / 1e6,
+                total as f64 / 1e6
+            )));
             if job.cancellable && ui.button("Cancel").clicked() {
                 job.progress.cancel.store(true, Ordering::Relaxed);
             }
@@ -549,10 +631,16 @@ impl Ready {
             ui.add_space(8.0);
             self.install_folder(ui);
             ui.add_space(8.0);
-            let newest = github::newest(&github::installable(&self.releases, self.config.prereleases)).cloned();
+            let newest = github::newest(&github::installable(
+                &self.releases,
+                self.config.prereleases,
+            ))
+            .cloned();
             match newest {
                 Some(release) => {
-                    let button = egui::Button::new(RichText::new(format!("Install {}", release.tag_name)).size(18.0));
+                    let button = egui::Button::new(
+                        RichText::new(format!("Install {}", release.tag_name)).size(18.0),
+                    );
                     if ui.add_enabled(self.job.is_none(), button).clicked() {
                         self.start_install(ctx, release, true);
                     }
@@ -584,12 +672,18 @@ impl Ready {
                 ui.label(RichText::new("📌 pinned").color(BLUE));
             }
         });
-        let released = if current.date().is_empty() { "Installed".to_string() } else { format!("Released {}", current.date()) };
-        ui.label(RichText::new(released).weak()).on_hover_text(current.dir.display().to_string());
+        let released = if current.date().is_empty() {
+            "Installed".to_string()
+        } else {
+            format!("Released {}", current.date())
+        };
+        ui.label(RichText::new(released).weak())
+            .on_hover_text(current.dir.display().to_string());
         ui.add_space(10.0);
 
         ui.horizontal(|ui| {
-            let play = egui::Button::new(RichText::new("▶  Play").size(24.0)).min_size(egui::vec2(180.0, 52.0));
+            let play = egui::Button::new(RichText::new("▶  Play").size(24.0))
+                .min_size(egui::vec2(180.0, 52.0));
             if ui.add(play).clicked() {
                 match launch::play(&self.paths, &mut self.config, &self.args) {
                     Ok(_) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
@@ -604,9 +698,11 @@ impl Ready {
         });
         if !self.config.launched.contains(&current.tag) && self.config.backup_before_new_version {
             ui.label(
-                RichText::new("This version has not started before; your saves are backed up first.")
-                    .small()
-                    .weak(),
+                RichText::new(
+                    "This version has not started before; your saves are backed up first.",
+                )
+                .small()
+                .weak(),
             );
         }
         ui.add_space(16.0);
@@ -619,7 +715,11 @@ impl Ready {
         let mut uninstall = None;
         let mut more = false;
         egui::ComboBox::from_id_salt("version")
-            .selected_text(RichText::new(format!("kjk {}", current.tag)).size(18.0).strong())
+            .selected_text(
+                RichText::new(format!("kjk {}", current.tag))
+                    .size(18.0)
+                    .strong(),
+            )
             .width(260.0)
             .show_ui(ui, |ui| {
                 ui.set_min_width(360.0);
@@ -655,7 +755,13 @@ impl Ready {
         }
     }
 
-    fn offer_box(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, current: &Installed, offer: Release) {
+    fn offer_box(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        current: &Installed,
+        offer: Release,
+    ) {
         let on_disk = self.installed.iter().any(|i| i.tag == offer.tag_name);
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -718,10 +824,16 @@ impl Ready {
         self.progress(ui);
         self.install_folder(ui);
         ui.horizontal(|ui| {
-            if ui.checkbox(&mut self.config.prereleases, "Show pre-releases").changed() {
+            if ui
+                .checkbox(&mut self.config.prereleases, "Show pre-releases")
+                .changed()
+            {
                 self.save();
             }
-            if ui.add_enabled(self.checking.is_none(), egui::Button::new("Check now")).clicked() {
+            if ui
+                .add_enabled(self.checking.is_none(), egui::Button::new("Check now"))
+                .clicked()
+            {
                 self.check(ctx);
             }
         });
@@ -734,28 +846,38 @@ impl Ready {
             ui.label("Nothing yet.");
         }
         let current = self.config.current.clone();
-        egui::Grid::new("installed").num_columns(5).spacing([12.0, 6.0]).show(ui, |ui| {
-            for version in &installed {
-                ui.label(RichText::new(&version.tag).strong());
-                ui.label(version.date());
-                ui.label(RichText::new(megabytes(self.sizes.get(&version.dir).copied().unwrap_or(0))).weak());
-                if current.as_deref() == Some(version.tag.as_str()) {
-                    ui.label(RichText::new("plays now").color(GREEN));
-                } else if ui.button("Use").clicked() {
-                    self.choose(version.tag.clone());
+        egui::Grid::new("installed")
+            .num_columns(5)
+            .spacing([12.0, 6.0])
+            .show(ui, |ui| {
+                for version in &installed {
+                    ui.label(RichText::new(&version.tag).strong());
+                    ui.label(version.date());
+                    ui.label(
+                        RichText::new(megabytes(
+                            self.sizes.get(&version.dir).copied().unwrap_or(0),
+                        ))
+                        .weak(),
+                    );
+                    if current.as_deref() == Some(version.tag.as_str()) {
+                        ui.label(RichText::new("plays now").color(GREEN));
+                    } else if ui.button("Use").clicked() {
+                        self.choose(version.tag.clone());
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("Uninstall").clicked() {
+                            self.confirm = Some(Confirm::Uninstall(version.tag.clone()));
+                        }
+                        if version.adopted {
+                            ui.label(RichText::new("found in the folder").weak())
+                                .on_hover_text(
+                                    "Unzipped by hand; the launcher never removes it by itself",
+                                );
+                        }
+                    });
+                    ui.end_row();
                 }
-                ui.horizontal(|ui| {
-                    if ui.button("Uninstall").clicked() {
-                        self.confirm = Some(Confirm::Uninstall(version.tag.clone()));
-                    }
-                    if version.adopted {
-                        ui.label(RichText::new("found in the folder").weak())
-                            .on_hover_text("Unzipped by hand; the launcher never removes it by itself");
-                    }
-                });
-                ui.end_row();
-            }
-        });
+            });
 
         ui.add_space(10.0);
         ui.heading("On GitHub");
@@ -777,7 +899,10 @@ impl Ready {
                 if self.config.skipped.as_deref() == Some(release.tag_name.as_str()) {
                     ui.label(RichText::new("skipped").weak());
                 }
-                if ui.add_enabled(self.job.is_none(), egui::Button::new("Install")).clicked() {
+                if ui
+                    .add_enabled(self.job.is_none(), egui::Button::new("Install"))
+                    .clicked()
+                {
                     let first = self.config.current.is_none();
                     self.start_install(ctx, release.clone(), first);
                 }
@@ -827,27 +952,46 @@ impl Ready {
         self.install_folder(ui);
         ui.add_space(6.0);
         let mut changed = false;
-        changed |= ui.checkbox(&mut self.config.check_on_start, "Check for updates when the launcher opens").changed();
-        changed |= ui.checkbox(&mut self.config.prereleases, "Offer pre-releases too").changed();
         changed |= ui
-            .checkbox(&mut self.config.pinned, "Stay on the current version (never offer updates)")
+            .checkbox(
+                &mut self.config.check_on_start,
+                "Check for updates when the launcher opens",
+            )
             .changed();
         changed |= ui
-            .checkbox(&mut self.config.backup_before_new_version, "Back up saves before a version's first start")
+            .checkbox(&mut self.config.prereleases, "Offer pre-releases too")
+            .changed();
+        changed |= ui
+            .checkbox(
+                &mut self.config.pinned,
+                "Stay on the current version (never offer updates)",
+            )
+            .changed();
+        changed |= ui
+            .checkbox(
+                &mut self.config.backup_before_new_version,
+                "Back up saves before a version's first start",
+            )
             .changed();
         ui.horizontal(|ui| {
-            changed |= ui.add(egui::DragValue::new(&mut self.config.keep_versions).range(0..=50)).changed();
+            changed |= ui
+                .add(egui::DragValue::new(&mut self.config.keep_versions).range(0..=50))
+                .changed();
             ui.label("installed versions to keep after an update (0 keeps all)");
         });
         ui.horizontal(|ui| {
-            changed |= ui.add(egui::DragValue::new(&mut self.config.keep_backups).range(1..=500)).changed();
+            changed |= ui
+                .add(egui::DragValue::new(&mut self.config.keep_backups).range(1..=500))
+                .changed();
             ui.label("backups to keep");
         });
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.label("Picture on the Play tab:");
             match &self.config.background {
-                Some(path) => ui.label(RichText::new(path.file_name().unwrap_or_default().to_string_lossy()).weak()),
+                Some(path) => ui.label(
+                    RichText::new(path.file_name().unwrap_or_default().to_string_lossy()).weak(),
+                ),
                 None => ui.label(RichText::new("none").weak()),
             };
             if ui.button("Choose…").clicked() {
@@ -865,7 +1009,11 @@ impl Ready {
             ui.horizontal(|ui| {
                 ui.label("Credit:");
                 let mut credit = self.config.background_credit.clone().unwrap_or_default();
-                let edit = ui.add(egui::TextEdit::singleline(&mut credit).hint_text("who made the picture").desired_width(320.0));
+                let edit = ui.add(
+                    egui::TextEdit::singleline(&mut credit)
+                        .hint_text("who made the picture")
+                        .desired_width(320.0),
+                );
                 if edit.changed() {
                     self.config.background_credit = Some(credit).filter(|c| !c.trim().is_empty());
                 }
@@ -889,7 +1037,13 @@ impl Ready {
         }
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            if ui.add_enabled(self.checking.is_none(), egui::Button::new("Check for updates now")).clicked() {
+            if ui
+                .add_enabled(
+                    self.checking.is_none(),
+                    egui::Button::new("Check for updates now"),
+                )
+                .clicked()
+            {
                 self.not_now = false;
                 self.check(ctx);
             }
@@ -991,7 +1145,9 @@ impl Ready {
         match confirm {
             Confirm::Restore(path) => {
                 self.notice = Some(match backup::restore(&self.paths, &path) {
-                    Ok(_) => Notice::Info("Restored. The saves from before are in a new backup.".into()),
+                    Ok(_) => {
+                        Notice::Info("Restored. The saves from before are in a new backup.".into())
+                    }
                     Err(e) => Notice::Error(e),
                 });
             }

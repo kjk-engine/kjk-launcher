@@ -124,7 +124,10 @@ impl Paths {
 
     /// Points `versions` at the configured install folder and makes it.
     pub fn use_install_dir(&mut self, config: &Config) -> Result<(), String> {
-        let dir = config.install_dir.clone().unwrap_or_else(|| self.default_install_dir());
+        let dir = config
+            .install_dir
+            .clone()
+            .unwrap_or_else(|| self.default_install_dir());
         fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         self.versions = dir;
         Ok(())
@@ -148,7 +151,11 @@ fn var(name: &str) -> Option<String> {
 
 fn kjk_folder() -> Option<PathBuf> {
     let base = if cfg!(target_os = "macos") {
-        var("HOME").map(|home| PathBuf::from(home).join("Library").join("Application Support"))
+        var("HOME").map(|home| {
+            PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+        })
     } else if cfg!(windows) {
         var("APPDATA").map(PathBuf::from)
     } else {
@@ -193,6 +200,12 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 /// A tag made safe as a file or folder name.
 pub fn file_safe(text: &str) -> String {
     text.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || "._-+".contains(c) { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "._-+".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
