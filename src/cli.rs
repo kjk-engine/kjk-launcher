@@ -61,9 +61,6 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
             config.current = Some(installed.tag.clone());
             config.save(&paths)?;
             println!("installed {} in {}", installed.tag, installed.dir.display());
-            for tag in install::prune(&paths, &config) {
-                println!("removed old version {tag}");
-            }
             Ok(())
         }
         "use" => {

@@ -26,9 +26,10 @@ Version 0.1.0 cannot update itself. Replace it with 0.2.0 by hand once.
 - "Choose folder" lets you pick a game's folder. kjk checks the folder
   first. The launcher saves it in kjk's settings only when kjk finds the game
   there.
-- Each version of kjk is installed in its own folder. The launcher keeps the
-  3 newest versions by default, so you can go back to an older one on the
-  Versions page.
+- Each version of kjk is installed in its own folder, so you can go back to
+  an older one on the Versions page. The launcher never deletes a version by
+  itself. "Delete older versions" in Settings deletes every installed
+  version except the selected one.
 - Before a version starts for the first time, the launcher makes a backup of
   kjk's saves and settings. A newer version can change a save so that an
   older version cannot read it. Settings lists the backups and restores one.

@@ -5,9 +5,6 @@ use super::*;
 /// The backups listed before "Show all".
 const BACKUPS_SHOWN: usize = 5;
 
-/// The most installed versions the player can choose to keep.
-const KEEP_VERSIONS_MOST: usize = 20;
-
 impl Ready {
     pub(super) fn settings_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         widgets::page_title(ui, "Settings");
@@ -55,18 +52,15 @@ impl Ready {
                 "Back up the saves before a version starts for the first time",
             )
             .changed();
-        widgets::line(ui, |ui| {
-            // An old launcher.json can hold 0, which keeps every version.
-            let mut keep = match self.config.keep_versions {
-                0 => KEEP_VERSIONS_MOST,
-                n => n.min(KEEP_VERSIONS_MOST),
-            };
-            if widgets::number_field(ui, &mut keep, 1..=KEEP_VERSIONS_MOST).changed() {
-                self.config.keep_versions = keep;
-                changed = true;
-            }
-            widgets::muted(ui, "Installed versions to keep");
-        });
+        let older = !install::older(&self.paths, &self.config).is_empty();
+        let delete = ui
+            .add_enabled_ui(older && self.job.is_none(), |ui| {
+                widgets::compact_button(ui, "Delete older versions")
+            })
+            .inner;
+        if delete.clicked() {
+            self.confirm = Some(Confirm::DeleteOlder);
+        }
         if changed {
             self.not_now = false;
             self.save();

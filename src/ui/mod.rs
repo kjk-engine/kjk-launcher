@@ -111,6 +111,8 @@ struct Job {
 enum Confirm {
     Restore(PathBuf),
     Uninstall(String),
+    /// Uninstall every version but the selected one.
+    DeleteOlder,
     UseOlder(String),
     ChangeFolder(PathBuf),
     /// Move kjk's folder to this folder.
@@ -607,13 +609,6 @@ impl Ready {
                     self.not_now = false;
                     self.save();
                     text.push_str(" Play now starts it.");
-                }
-                let removed = install::prune(&self.paths, &self.config);
-                if !removed.is_empty() {
-                    text.push_str(&format!(
-                        " Uninstalled old versions: {}.",
-                        removed.join(", ")
-                    ));
                 }
                 self.notice = Some(Notice::Info(text));
             }
