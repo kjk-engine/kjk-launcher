@@ -92,10 +92,11 @@ pub(super) fn bar_background(ui: &mut egui::Ui, rect: egui::Rect) {
     if kind() == Kind::System {
         return;
     }
+    // Not focusable: Tab skips the bar itself and goes to its controls.
     let response = ui.interact(
         rect,
         ui.scope_id().with("title bar"),
-        egui::Sense::click_and_drag(),
+        egui::Sense::CLICK | egui::Sense::DRAG,
     );
     if response.double_clicked() {
         let maximized = ui.input(|i| i.viewport().maximized) == Some(true);
@@ -194,6 +195,7 @@ fn window_button(ui: &mut egui::Ui, glyph: Glyph) -> egui::Response {
             painter.line_segment([c - other, c + other], stroke);
         }
     }
+    widgets::focus_outline(ui, &response);
     response
 }
 

@@ -60,6 +60,31 @@ folder is missing.
 
 This has only been checked on Windows.
 
+## Steam Deck
+
+The launcher can be used with the Steam Deck's controls alone. Add the
+launcher to Steam as a non-Steam game. Open its controller settings in Steam
+and pick a layout for keyboard and mouse, then set the buttons like this:
+
+- The D-pad sends the arrow keys.
+- The A button sends Enter.
+- The B button sends Escape.
+- The right trackpad moves the mouse.
+
+When the launcher opens, Play has the focus, so pressing A starts the game.
+When no version is installed yet, the install button has the focus instead.
+The arrow keys move the focus between the buttons, and Tab and Shift+Tab do
+the same in a fixed order. A white outline shows which button has the focus.
+Enter or Space presses it. Escape closes the version menu or the open dialog.
+
+Gaming Mode has no folder dialog. When the launcher cannot open one, it asks
+you to type or paste the folder's full path instead. On Linux, a "Type a
+path" button sits next to each button that chooses a folder, because the
+launcher cannot always tell a missing folder dialog from a closed one.
+
+SteamOS does not let programs be installed with a command, so the "Install
+ffmpeg" dialog links to the ffmpeg download page instead.
+
 ## Where things are
 
 Everything is in one folder, the kjk folder. It is `%APPDATA%\kjk` on
@@ -110,7 +135,8 @@ Point these variables at scratch folders before a test run:
 | `KJK_LAUNCHER_OFFLINE=1` | The launcher acts as if GitHub could not be reached. |
 | `KJK_LAUNCHER_SHOT=<file.png>` | The launcher saves a picture of its window and closes. |
 | `KJK_LAUNCHER_TAB=versions` | The window opens on that page (play, versions or settings). |
-| `KJK_LAUNCHER_MENU=1` | The version menu is open. `ffmpeg` opens the "Install ffmpeg" dialog instead, and `move:<folder>` the dialog that asks to move the kjk folder there. |
+| `KJK_LAUNCHER_MENU=1` | The version menu is open. `ffmpeg` opens the "Install ffmpeg" dialog instead, `move:<folder>` the dialog that asks to move the kjk folder there, and `type:<text>` the dialog for a typed folder path with that text in it. |
+| `KJK_LAUNCHER_TYPE_PATHS=1` | Every button that chooses a folder opens the launcher's dialog for a typed path instead of the system's folder dialog. |
 | `KJK_LAUNCHER_SCROLL=400` | The Versions or Settings page is scrolled down that many points. |
 | `KJK_LAUNCHER_FRAME=windows` | The window has the Windows frame on any system. |
 | `KJK_LAUNCHER_SELF_PRERELEASE=1` | The launcher offers its own pre-releases as updates. |

@@ -19,6 +19,8 @@ pub const ON_INK: Color32 = Color32::from_rgb(0x12, 0x12, 0x12);
 pub const OK: Color32 = Color32::from_rgb(0x73, 0xd1, 0x85);
 pub const WARN: Color32 = Color32::from_rgb(0xf2, 0xad, 0x4d);
 pub const ERROR: Color32 = Color32::from_rgb(0xf2, 0x73, 0x6b);
+/// The shade over the page while a dialog is open.
+pub const SCRIM: Color32 = Color32::from_black_alpha(140);
 
 pub const SPACE_1: f32 = 4.0;
 pub const SPACE_2: f32 = 8.0;
