@@ -55,6 +55,11 @@ pub const ROW: f32 = 32.0;
 /// A dialog's widest content.
 pub const DIALOG_WIDTH: f32 = 440.0;
 
+/// macOS: the room the three window buttons take at the left of the top
+/// bar, and the height of the title bar they are centered in.
+pub const MAC_BUTTONS: f32 = 80.0;
+pub const MAC_TITLE_BAR: f32 = 28.0;
+
 /// The window's size when it opens, and the smallest it can be made.
 pub const WINDOW: [f32; 2] = [960.0, 600.0];
 pub const WINDOW_MIN: [f32; 2] = [800.0, 520.0];

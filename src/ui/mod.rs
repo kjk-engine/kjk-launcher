@@ -3,6 +3,7 @@
 
 mod backups;
 mod dialogs;
+mod frame;
 mod play;
 mod settings;
 mod versions;
@@ -29,10 +30,12 @@ use std::time::Duration;
 
 pub fn run(args: Vec<String>) -> eframe::Result {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("kjk launcher")
-            .with_inner_size(theme::WINDOW)
-            .with_min_inner_size(theme::WINDOW_MIN),
+        viewport: frame::viewport(
+            egui::ViewportBuilder::default()
+                .with_title("kjk launcher")
+                .with_inner_size(theme::WINDOW)
+                .with_min_inner_size(theme::WINDOW_MIN),
+        ),
         ..Default::default()
     };
     eframe::run_native(
@@ -156,6 +159,7 @@ enum App {
 impl App {
     fn new(ctx: &egui::Context, args: Vec<String>) -> App {
         theme::install(ctx);
+        frame::start(ctx);
         match crate::config::open() {
             Ok((paths, config)) => {
                 install::clean_leftovers(&paths);
@@ -483,10 +487,15 @@ impl Ready {
                 theme::SPACE_3 as i8,
             ));
 
+        let top = frame::bar(ctx);
         egui::Panel::top("tabs")
-            .frame(bar)
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::GROUND)
+                    .inner_margin(top.margin),
+            )
             .resizable(false)
-            .show(ui, |ui| self.top_bar(ui));
+            .show(ui, |ui| self.top_bar(ui, top.height));
 
         egui::Panel::bottom("status")
             .frame(bar)
@@ -513,8 +522,12 @@ impl Ready {
 
     /// The mark, the word "kjk-engine" and the four tab names. The open tab
     /// is `INK` with a 1px `INK` underline, the others `INK_FAINT`.
-    fn top_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+    fn top_bar(&mut self, ui: &mut egui::Ui, height: f32) {
+        let whole = ui.clip_rect();
+        frame::bar_background(ui, whole);
+        let size = egui::vec2(ui.available_width(), height);
+        let layout = egui::Layout::left_to_right(egui::Align::Center);
+        ui.allocate_ui_with_layout(size, layout, |ui| {
             if let Some(mark) = &self.mark {
                 ui.add(
                     egui::Image::new(mark).fit_to_exact_size(egui::vec2(theme::MARK, theme::MARK)),
