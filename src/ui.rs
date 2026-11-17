@@ -88,28 +88,6 @@ struct Ready {
     tab: Tab,
     /// Passed to kjk when Play starts it.
     args: Vec<String>,
-    banner: Option<egui::TextureHandle>,
-    banner_loading: Option<mpsc::Receiver<Result<egui::ColorImage, String>>>,
-}
-
-/// Decodes a picture, scaled down to at most 1920 pixels wide.
-fn decode_picture(path: &std::path::Path) -> Result<egui::ColorImage, String> {
-    let picture = image::ImageReader::open(path)
-        .and_then(|reader| reader.with_guessed_format())
-        .map_err(|e| format!("{}: {e}", path.display()))?
-        .decode()
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-    let picture = if picture.width() > 1920 {
-        picture.resize(1920, u32::MAX, image::imageops::FilterType::Triangle)
-    } else {
-        picture
-    };
-    let rgba = picture.to_rgba8();
-    let size = [rgba.width() as usize, rgba.height() as usize];
-    Ok(egui::ColorImage::from_rgba_unmultiplied(
-        size,
-        rgba.as_raw(),
-    ))
 }
 
 enum App {
@@ -138,10 +116,7 @@ impl App {
                     notice: None,
                     tab: Tab::Play,
                     args,
-                    banner: None,
-                    banner_loading: None,
                 };
-                ready.load_banner(ctx);
                 ready.refresh();
                 if ready.config.check_on_start {
                     ready.check(ctx);
@@ -181,104 +156,6 @@ impl Ready {
             ctx.request_repaint();
         });
         self.checking = Some(rx);
-    }
-
-    fn load_banner(&mut self, ctx: &egui::Context) {
-        self.banner = None;
-        self.banner_loading = None;
-        let Some(path) = self.config.background.clone() else {
-            return;
-        };
-        let (tx, rx) = mpsc::channel();
-        let ctx = ctx.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(decode_picture(&path));
-            ctx.request_repaint();
-        });
-        self.banner_loading = Some(rx);
-    }
-
-    /// The picture across the top of the Play tab, cropped to fill it and
-    /// fading into the window at the bottom, with its credit in the corner.
-    fn draw_banner(&self, ui: &mut egui::Ui) {
-        let Some(texture) = &self.banner else { return };
-        let width = ui.available_width();
-        // Smaller while an update is offered, so Play stays in view.
-        let share = if self.offer().is_some() && !self.not_now {
-            0.3
-        } else {
-            0.45
-        };
-        let height = (width * 0.42)
-            .min(ui.available_height() * share)
-            .clamp(120.0, 360.0);
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
-        let [w, h] = texture.size();
-        let picture = w as f32 / h as f32;
-        let frame = width / height;
-        let uv = if picture > frame {
-            let shown = frame / picture;
-            let left = (1.0 - shown) / 2.0;
-            egui::Rect::from_min_max(egui::pos2(left, 0.0), egui::pos2(left + shown, 1.0))
-        } else {
-            let shown = picture / frame;
-            let top = (1.0 - shown) * 0.4;
-            egui::Rect::from_min_max(egui::pos2(0.0, top), egui::pos2(1.0, top + shown))
-        };
-        let painter = ui.painter_at(rect);
-        painter.image(texture.id(), rect, uv, Color32::WHITE);
-
-        let fill = ui.visuals().panel_fill;
-        let fade = egui::Rect::from_min_max(
-            egui::pos2(rect.left(), rect.bottom() - height * 0.3),
-            rect.max,
-        );
-        let mut mesh = egui::Mesh::default();
-        mesh.colored_vertex(fade.left_top(), Color32::TRANSPARENT);
-        mesh.colored_vertex(fade.right_top(), Color32::TRANSPARENT);
-        mesh.colored_vertex(fade.left_bottom(), fill);
-        mesh.colored_vertex(fade.right_bottom(), fill);
-        mesh.add_triangle(0, 1, 2);
-        mesh.add_triangle(1, 3, 2);
-        painter.add(mesh);
-
-        if let Some(credit) = &self.config.background_credit {
-            let at = rect.right_top() + egui::vec2(-8.0, 6.0);
-            let font = egui::FontId::proportional(11.0);
-            let text = format!("Art: {credit}");
-            painter.text(
-                at + egui::vec2(1.0, 1.0),
-                egui::Align2::RIGHT_TOP,
-                &text,
-                font.clone(),
-                Color32::from_black_alpha(200),
-            );
-            painter.text(
-                at,
-                egui::Align2::RIGHT_TOP,
-                &text,
-                font,
-                Color32::from_white_alpha(210),
-            );
-        }
-    }
-
-    fn pick_background(&mut self, ctx: &egui::Context) {
-        let Some(file) = rfd::FileDialog::new()
-            .set_title("Choose a picture for the Play tab")
-            .add_filter("Pictures", &["png", "jpg", "jpeg", "webp"])
-            .pick_file()
-        else {
-            return;
-        };
-        match crate::config::import_background(&self.paths, &file) {
-            Ok(copy) => {
-                self.config.background = Some(copy);
-                self.save();
-                self.load_banner(ctx);
-            }
-            Err(e) => self.notice = Some(Notice::Error(e)),
-        }
     }
 
     fn save(&mut self) {
@@ -442,22 +319,7 @@ impl Ready {
         }
     }
 
-    fn poll(&mut self, ctx: &egui::Context) {
-        if let Some(rx) = &self.banner_loading {
-            if let Ok(decoded) = rx.try_recv() {
-                self.banner_loading = None;
-                match decoded {
-                    Ok(picture) => {
-                        self.banner =
-                            Some(ctx.load_texture("banner", picture, egui::TextureOptions::LINEAR));
-                    }
-                    Err(e) => {
-                        self.notice =
-                            Some(Notice::Error(format!("Could not show the picture: {e}")))
-                    }
-                }
-            }
-        }
+    fn poll(&mut self) {
         if let Some(rx) = &self.checking {
             if let Ok(releases) = rx.try_recv() {
                 self.checking = None;
@@ -513,7 +375,7 @@ impl Ready {
 
     fn update(&mut self, ui: &mut egui::Ui) {
         let ctx = &ui.ctx().clone();
-        self.poll(ctx);
+        self.poll();
         if self.job.is_some() || self.checking.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
@@ -538,9 +400,6 @@ impl Ready {
         });
 
         egui::CentralPanel::default().show(ui, |ui| {
-            if self.tab == Tab::Play {
-                self.draw_banner(ui);
-            }
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| match self.tab {
@@ -985,43 +844,6 @@ impl Ready {
                 .changed();
             ui.label("backups to keep");
         });
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.label("Picture on the Play tab:");
-            match &self.config.background {
-                Some(path) => ui.label(
-                    RichText::new(path.file_name().unwrap_or_default().to_string_lossy()).weak(),
-                ),
-                None => ui.label(RichText::new("none").weak()),
-            };
-            if ui.button("Choose…").clicked() {
-                self.pick_background(ctx);
-            }
-            if self.config.background.is_some() && ui.button("Remove").clicked() {
-                if let Some(path) = self.config.background.take() {
-                    let _ = std::fs::remove_file(path);
-                }
-                changed = true;
-                self.load_banner(ctx);
-            }
-        });
-        if self.config.background.is_some() {
-            ui.horizontal(|ui| {
-                ui.label("Credit:");
-                let mut credit = self.config.background_credit.clone().unwrap_or_default();
-                let edit = ui.add(
-                    egui::TextEdit::singleline(&mut credit)
-                        .hint_text("who made the picture")
-                        .desired_width(320.0),
-                );
-                if edit.changed() {
-                    self.config.background_credit = Some(credit).filter(|c| !c.trim().is_empty());
-                }
-                if edit.lost_focus() {
-                    changed = true;
-                }
-            });
-        }
         if let Some(skipped) = self.config.skipped.clone() {
             ui.horizontal(|ui| {
                 ui.label(format!("Skipped release: {skipped}"));

@@ -26,8 +26,6 @@ kjk-launcher-cli <command>
   unskip              offer the skipped release again
   pin | unpin         stay on the current version, or offer updates again
   prereleases on|off  offer and list pre-releases too
-  background <file> [credit] | none
-                      a picture of your own for the Play tab, and who made it
 ";
 
 pub fn run(args: Vec<String>) -> Result<(), String> {
@@ -154,23 +152,6 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
         }
         "skip" => {
             config.skipped = Some(arg.ok_or("which release?")?.into());
-            config.save(&paths)
-        }
-        "background" => {
-            match arg {
-                Some("none") | None => {
-                    config.background = None;
-                    config.background_credit = None;
-                }
-                Some(file) => {
-                    config.background = Some(crate::config::import_background(
-                        &paths,
-                        std::path::Path::new(file),
-                    )?);
-                    config.background_credit =
-                        args.get(2).cloned().filter(|c| !c.trim().is_empty());
-                }
-            }
             config.save(&paths)
         }
         "unskip" => {

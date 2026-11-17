@@ -33,11 +33,6 @@ pub struct Config {
     pub keep_backups: usize,
     /// Versions that have been started at least once.
     pub launched: Vec<String>,
-    /// A picture of the player's own shown on the Play tab: a copy in the
-    /// launcher's folder, never shipped with the launcher.
-    pub background: Option<PathBuf>,
-    /// Who made the picture, shown in its corner.
-    pub background_credit: Option<String>,
 }
 
 impl Default for Config {
@@ -53,8 +48,6 @@ impl Default for Config {
             keep_versions: 3,
             keep_backups: 10,
             launched: Vec::new(),
-            background: None,
-            background_credit: None,
         }
     }
 }
@@ -166,28 +159,6 @@ fn kjk_folder() -> Option<PathBuf> {
     base.map(|base| base.join("kjk"))
 }
 
-/// Copies a picture into the launcher's folder as `background.<ext>` and
-/// returns the copy (the original may be in a folder that gets cleaned up).
-pub fn import_background(paths: &Paths, from: &Path) -> Result<PathBuf, String> {
-    let ext = from
-        .extension()
-        .map(|e| e.to_string_lossy().to_ascii_lowercase())
-        .filter(|e| ["png", "jpg", "jpeg", "webp"].contains(&e.as_str()))
-        .unwrap_or_else(|| "png".into());
-    let to = paths.root.join(format!("background.{ext}"));
-    let same = |a: &Path, b: &Path| matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b);
-    if same(from, &to) {
-        return Ok(to);
-    }
-    let incoming = paths.root.join(format!("background.{ext}.tmp"));
-    fs::copy(from, &incoming).map_err(|e| format!("{}: {e}", from.display()))?;
-    for old in ["png", "jpg", "jpeg", "webp"] {
-        let _ = fs::remove_file(paths.root.join(format!("background.{old}")));
-    }
-    fs::rename(&incoming, &to).map_err(|e| format!("{}: {e}", to.display()))?;
-    Ok(to)
-}
-
 /// Writes through a temporary file, so a crash never leaves half a file.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut tmp = path.as_os_str().to_owned();
@@ -208,4 +179,18 @@ pub fn file_safe(text: &str) -> String {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_a_0_1_0_config_with_background_fields() {
+        let old = r#"{"current":"v0.19.0","keep_versions":3,"background":"C:\\x\\background.png","background_credit":"someone"}"#;
+        let config: Config = serde_json::from_str(old).unwrap();
+        assert_eq!(config.current.as_deref(), Some("v0.19.0"));
+        let again = serde_json::to_string(&config).unwrap();
+        assert!(!again.contains("background"));
+    }
 }
