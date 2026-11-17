@@ -66,15 +66,28 @@ pub fn add(ui: &mut egui::Ui, widget: impl egui::Widget) -> egui::Response {
     response
 }
 
-/// An 8px dot in the status color, then the word in the label style.
+/// An 8px dot in the status color, then the word in the label style. In a
+/// right-to-left layout the two are added in reverse, so the dot still
+/// comes first.
 pub fn status(ui: &mut egui::Ui, status: Status, word: &str) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = theme::SPACE_2;
-        let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(theme::DOT, theme::DOT), egui::Sense::hover());
-        ui.painter()
-            .circle_filled(rect.center(), theme::DOT / 2.0, status.color());
-        ui.label(text(word, Text::Label, theme::INK));
+        let dot = |ui: &mut egui::Ui| {
+            let size = egui::vec2(theme::DOT, theme::DOT);
+            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+            ui.painter()
+                .circle_filled(rect.center(), theme::DOT / 2.0, status.color());
+        };
+        let words = |ui: &mut egui::Ui| {
+            ui.label(text(word, Text::Label, theme::INK));
+        };
+        if ui.layout().prefer_right_to_left() {
+            words(ui);
+            dot(ui);
+        } else {
+            dot(ui);
+            words(ui);
+        }
     });
 }
 

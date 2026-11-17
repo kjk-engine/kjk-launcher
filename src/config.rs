@@ -133,8 +133,12 @@ impl Paths {
             .or_else(|| self.kjk_data.as_ref().map(|dir| dir.join("saves")))
     }
 
+    /// kjk's settings file: `KJK_SETTINGS`, else `settings.json` in kjk's
+    /// folder (as kjk finds it).
     pub fn settings(&self) -> Option<PathBuf> {
-        self.kjk_data.as_ref().map(|dir| dir.join("settings.json"))
+        var("KJK_SETTINGS")
+            .map(PathBuf::from)
+            .or_else(|| self.kjk_data.as_ref().map(|dir| dir.join("settings.json")))
     }
 }
 

@@ -4,6 +4,8 @@ use crate::backup::{self, Backup};
 use crate::config::{Config, Paths};
 use crate::github::{self, Release, Releases};
 use crate::install::{self, Installed, Moved, Progress};
+use crate::kjk_report::{self, Game, GameStatus, Report};
+use crate::kjk_settings;
 use crate::launch;
 use crate::shot::{self, Shot};
 use crate::theme::{self, Text};
@@ -87,6 +89,16 @@ enum Confirm {
     ChangeFolder(PathBuf),
 }
 
+/// The game folders as the selected version reports them.
+enum Games {
+    /// Not asked for the selected version yet, or asked again.
+    Stale,
+    /// Asked, and waiting for the answer for this version.
+    Asking(String),
+    /// The answer for this version. `None` when it cannot report.
+    Known(String, Option<Report>),
+}
+
 enum Notice {
     Info(String),
     Error(String),
@@ -112,6 +124,14 @@ struct Ready {
     /// Passed to kjk when Play starts it.
     args: Vec<String>,
     mark: Option<egui::TextureHandle>,
+    /// What the selected version reports about its game folders and ffmpeg.
+    games: Games,
+    /// The report being asked for, on a background thread.
+    asking: Option<mpsc::Receiver<Option<Report>>>,
+    /// Whether the full "Before you play" list is open while all is ready.
+    show_details: bool,
+    /// Why a folder the player chose is not usable, by game.
+    folder_problems: HashMap<&'static str, String>,
     /// Opens the version menu on the first frame (`KJK_LAUNCHER_MENU`).
     open_menu: bool,
     shot: Shot,
@@ -146,6 +166,10 @@ impl App {
                     tab: Tab::from_env(),
                     args,
                     mark: theme::mark(ctx),
+                    games: Games::Stale,
+                    asking: None,
+                    show_details: false,
+                    folder_problems: HashMap::new(),
                     open_menu: shot::menu_open(),
                     shot: Shot::from_env(),
                 };
@@ -268,6 +292,7 @@ impl Ready {
             self.confirm = Some(Confirm::UseOlder(tag));
         } else {
             self.config.current = Some(tag);
+            self.games = Games::Stale;
             self.save();
         }
     }
@@ -374,6 +399,14 @@ impl Ready {
                 }
             }
         }
+        if let Some(rx) = &self.asking {
+            if let Ok(answer) = rx.try_recv() {
+                self.asking = None;
+                if let Games::Asking(tag) = &self.games {
+                    self.games = Games::Known(tag.clone(), answer);
+                }
+            }
+        }
         let finished = self.job.as_ref().and_then(|job| job.done.try_recv().ok());
         let Some(outcome) = finished else { return };
         self.job = None;
@@ -420,7 +453,7 @@ impl Ready {
     fn update(&mut self, ui: &mut egui::Ui) {
         let ctx = &ui.ctx().clone();
         self.poll();
-        if self.job.is_some() || self.checking.is_some() {
+        if self.job.is_some() || self.checking.is_some() || self.asking.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
         } else {
             // The footer counts the minutes since the last check.
@@ -461,7 +494,7 @@ impl Ready {
         });
 
         self.confirm_window(ctx);
-        let busy = self.job.is_some() || self.checking.is_some();
+        let busy = self.job.is_some() || self.checking.is_some() || self.asking.is_some();
         self.shot.frame(ctx, busy);
     }
 
@@ -492,6 +525,9 @@ impl Ready {
                     );
                 }
                 if response.clicked() {
+                    if tab == Tab::Play && self.tab != Tab::Play {
+                        self.games = Games::Stale;
+                    }
                     self.tab = tab;
                 }
             }
@@ -575,14 +611,31 @@ impl Ready {
             return;
         };
 
+        self.ask_kjk(ctx, &current);
+        let report = match &self.games {
+            Games::Known(_, report) => report.clone(),
+            _ => None,
+        };
+        let blocked = kjk_report::blocked_by(report.as_ref());
+
         ui.horizontal(|ui| {
             self.version_menu(ui, ctx, &current.tag);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if widgets::primary_button(ui, "Play").clicked() {
+                let play = ui
+                    .add_enabled_ui(blocked.is_none(), |ui| widgets::primary_button(ui, "Play"))
+                    .inner;
+                if play.clicked() {
                     match launch::play(&self.paths, &mut self.config, &self.args) {
                         Ok(_) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                         Err(e) => self.notice = Some(Notice::Error(e)),
                     }
+                }
+                if let Some(game) = blocked {
+                    ui.label(widgets::text(
+                        format!("Choose the {} folder to play.", game.name()),
+                        Text::Body,
+                        theme::INK_MUTED,
+                    ));
                 }
                 if install::editor_exe(&current.dir).is_some()
                     && widgets::secondary_button(ui, "Open the save editor").clicked()
@@ -605,6 +658,162 @@ impl Ready {
         if let Some(offer) = self.offer().filter(|_| !self.not_now) {
             self.offer_box(ui, ctx, offer);
             ui.add_space(theme::SPACE_6);
+        }
+
+        self.before_you_play(ui, &current, report.as_ref());
+    }
+
+    /// Asks the selected version for its report on a background thread,
+    /// unless it was asked already.
+    fn ask_kjk(&mut self, ctx: &egui::Context, current: &Installed) {
+        let fresh = match &self.games {
+            Games::Stale => false,
+            Games::Asking(tag) | Games::Known(tag, _) => *tag == current.tag,
+        };
+        if fresh {
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        let kjk = install::game_binary(&current.dir);
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(kjk_report::ask(&kjk));
+            ctx.request_repaint();
+        });
+        self.asking = Some(rx);
+        self.games = Games::Asking(current.tag.clone());
+    }
+
+    /// The "Before you play" section: a row for each game.
+    fn before_you_play(&mut self, ui: &mut egui::Ui, current: &Installed, report: Option<&Report>) {
+        widgets::section_label(ui, "Before you play");
+        ui.add_space(theme::SPACE_2);
+        if matches!(self.games, Games::Asking(_) | Games::Stale) {
+            ui.label(widgets::text(
+                "The launcher is asking kjk where the games are.",
+                Text::Body,
+                theme::INK_MUTED,
+            ));
+            return;
+        }
+        let Some(report) = report else {
+            ui.label(widgets::text(
+                "This version of kjk cannot report its game folders. It finds them itself when it starts.",
+                Text::Body,
+                theme::INK_MUTED,
+            ));
+            return;
+        };
+        let ffmpeg = report.ffmpeg == Some(true);
+        if kjk_report::all_ready(report, ffmpeg) && !self.show_details {
+            ui.horizontal(|ui| {
+                widgets::status(ui, Status::Ok, "Ready to play");
+                if widgets::text_button(ui, "Show details").clicked() {
+                    self.show_details = true;
+                }
+            });
+            return;
+        }
+        if kjk_report::all_ready(report, ffmpeg)
+            && widgets::text_button(ui, "Hide details").clicked()
+        {
+            self.show_details = false;
+        }
+        for game in Game::ALL {
+            widgets::hairline(ui);
+            let status = report.status(game).cloned().unwrap_or(GameStatus::Missing);
+            self.game_row(ui, current, game, &status);
+        }
+        widgets::hairline(ui);
+    }
+
+    /// One game's row: its name, its folder or why kjk needs it, its status
+    /// and a button to choose the folder.
+    fn game_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        current: &Installed,
+        game: Game,
+        status: &GameStatus,
+    ) {
+        ui.add_space(theme::SPACE_3);
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(widgets::text(game.name(), Text::Heading, theme::INK));
+                match status {
+                    GameStatus::Found { path, .. } | GameStatus::Refused { path, .. } => {
+                        ui.label(widgets::text(
+                            path.display().to_string(),
+                            Text::Mono,
+                            theme::INK_MUTED,
+                        ));
+                    }
+                    GameStatus::Missing => {
+                        ui.label(widgets::text(
+                            game.needed_for(),
+                            Text::Body,
+                            theme::INK_MUTED,
+                        ));
+                    }
+                }
+                let why = match status {
+                    GameStatus::Refused { why, .. } => Some(why.clone()),
+                    _ => None,
+                };
+                if let Some(why) = self.folder_problems.get(game.key()).cloned().or(why) {
+                    ui.label(widgets::text(why, Text::Body, theme::INK_MUTED));
+                }
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let found = matches!(status, GameStatus::Found { .. });
+                let label = if found {
+                    "Change folder"
+                } else {
+                    "Choose folder"
+                };
+                if widgets::secondary_button(ui, label).clicked() {
+                    self.choose_game_folder(current, game);
+                }
+                ui.add_space(theme::SPACE_4);
+                let (dot, word) = kjk_report::status_word(status);
+                widgets::status(ui, dot, word);
+            });
+        });
+        ui.add_space(theme::SPACE_3);
+    }
+
+    /// Asks for a folder, has kjk check it, and saves it in kjk's settings
+    /// only when kjk finds the game there.
+    fn choose_game_folder(&mut self, current: &Installed, game: Game) {
+        let Some(folder) = rfd::FileDialog::new()
+            .set_title(format!("Choose the {} folder", game.name()))
+            .pick_folder()
+        else {
+            return;
+        };
+        let kjk = install::game_binary(&current.dir);
+        match kjk_report::check(&kjk, game, &folder) {
+            Some(GameStatus::Found { .. }) => {
+                self.folder_problems.remove(game.key());
+                let saved = self
+                    .paths
+                    .settings()
+                    .ok_or_else(|| "The launcher could not find kjk's settings file.".to_string())
+                    .and_then(|file| kjk_settings::set_install(&file, game, &folder));
+                self.notice = Some(match saved {
+                    Ok(()) => Notice::Info(format!("The {} folder is saved.", game.name())),
+                    Err(e) => Notice::Error(e),
+                });
+                self.games = Games::Stale;
+            }
+            Some(GameStatus::Refused { why, .. }) => {
+                self.folder_problems.insert(game.key(), why);
+            }
+            _ => {
+                self.notice = Some(Notice::Error(
+                    "This version of kjk cannot check a folder.".to_string(),
+                ));
+            }
         }
     }
 
