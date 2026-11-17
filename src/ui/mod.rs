@@ -522,19 +522,17 @@ impl Ready {
 
         let top = frame::bar(ctx);
         egui::Panel::top("tabs")
-            .frame(
-                egui::Frame::new()
-                    .fill(theme::GROUND)
-                    .inner_margin(top.margin),
-            )
+            .frame(egui::Frame::new().fill(theme::GROUND))
+            .exact_size(theme::TOP_BAR)
+            .show_separator_line(false)
             .resizable(false)
-            .show(ui, |ui| self.top_bar(ui, top.height));
+            .show(ui, |ui| self.top_bar(ui, &top));
 
         egui::Panel::bottom("status")
             .frame(bar)
             .resizable(false)
             .show(ui, |ui| {
-                let size = egui::vec2(ui.available_width(), theme::WINDOW_BUTTON.y);
+                let size = egui::vec2(ui.available_width(), theme::FOOTER_ROW);
                 let layout = egui::Layout::left_to_right(egui::Align::Center);
                 ui.allocate_ui_with_layout(size, layout, |ui| {
                     self.status_line(ui);
@@ -561,47 +559,63 @@ impl Ready {
         self.shot.frame(ctx, busy);
     }
 
-    /// The mark, the word "kjk-engine" and the four tab names. The open tab
-    /// is `INK` with a 1px `INK` underline, the others `INK_FAINT`.
-    fn top_bar(&mut self, ui: &mut egui::Ui, height: f32) {
-        let whole = ui.clip_rect();
+    /// The mark, the word "kjk-engine" and the tab names, all centred on
+    /// the middle of the bar, which ends in a hairline. The open tab is
+    /// `INK` with a 1px `INK` line on that hairline under its name, the
+    /// others `INK_FAINT`.
+    fn top_bar(&mut self, ui: &mut egui::Ui, bar: &frame::Bar) {
+        let whole = ui.max_rect();
         frame::bar_background(ui, whole);
-        let size = egui::vec2(ui.available_width(), height);
-        let layout = egui::Layout::left_to_right(egui::Align::Center);
-        ui.allocate_ui_with_layout(size, layout, |ui| {
-            if let Some(mark) = &self.mark {
-                ui.add(
-                    egui::Image::new(mark).fit_to_exact_size(egui::vec2(theme::MARK, theme::MARK)),
-                );
+        let middle = whole.center().y;
+        let mut x = whole.left() + bar.left;
+        if let Some(mark) = &self.mark {
+            let side = egui::vec2(theme::MARK, theme::MARK);
+            let rect = egui::Rect::from_min_size(egui::pos2(x, middle - theme::MARK / 2.0), side);
+            egui::Image::new(mark).paint_at(ui, rect);
+            x = rect.right() + theme::SPACE_2;
+        }
+        let word = widgets::paint_centred(ui, "kjk-engine", Text::Wordmark, theme::INK, x, middle);
+        x = word.right() + theme::SPACE_8;
+        let mut underline = None;
+        for tab in Tab::ALL {
+            let open = self.tab == tab;
+            let color = if open { theme::INK } else { theme::INK_FAINT };
+            let rect = widgets::paint_centred(ui, tab.name(), Text::Label, color, x, middle);
+            x = rect.right() + theme::SPACE_6;
+            let response = ui
+                .interact(rect, ui.scope_id().with(tab.name()), egui::Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            widgets::focus_outline(ui, &response);
+            if open {
+                underline = Some(rect.x_range());
             }
-            ui.label(widgets::text("kjk-engine", Text::Wordmark, theme::INK));
-            ui.add_space(theme::SPACE_6);
-            ui.spacing_mut().item_spacing.x = theme::SPACE_6;
-            for tab in Tab::ALL {
-                let open = self.tab == tab;
-                let color = if open { theme::INK } else { theme::INK_FAINT };
-                let label = egui::Label::new(widgets::text(tab.name(), Text::Label, color))
-                    .sense(egui::Sense::click());
-                let response = widgets::add(ui, label);
-                if open {
-                    let under = response.rect.bottom() + theme::SPACE_1;
-                    ui.painter().hline(
-                        response.rect.x_range(),
-                        under,
-                        egui::Stroke::new(theme::HAIRLINE, theme::INK),
-                    );
+            if response.clicked() {
+                if tab == Tab::Play && self.tab != Tab::Play {
+                    self.games = Games::Stale;
                 }
-                if response.clicked() {
-                    if tab == Tab::Play && self.tab != Tab::Play {
-                        self.games = Games::Stale;
-                    }
-                    self.tab = tab;
-                }
+                self.tab = tab;
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                frame::window_buttons(ui);
-            });
-        });
+        }
+        let buttons = egui::Rect::from_min_max(
+            egui::pos2(x, whole.top()),
+            egui::pos2(whole.right() - bar.right, whole.bottom()),
+        );
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(buttons)
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+            frame::window_buttons,
+        );
+        let painter = ui.painter();
+        let line = whole.bottom() - theme::HAIRLINE / 2.0;
+        painter.hline(
+            whole.x_range(),
+            line,
+            egui::Stroke::new(theme::HAIRLINE, theme::LINE),
+        );
+        if let Some(under) = underline {
+            painter.hline(under, line, egui::Stroke::new(theme::HAIRLINE, theme::INK));
+        }
     }
 
     /// The footer's right side: whether the launcher is up to date, or the
@@ -681,7 +695,7 @@ impl Ready {
                 let words = if self.checking.is_some() {
                     "Checking for updates.".to_string()
                 } else if self.problem.is_some() {
-                    "The launcher could not reach GitHub. Play still works.".to_string()
+                    "The launcher could not check GitHub for updates.".to_string()
                 } else if let Some(at) = self.checked_at {
                     checked_ago(at.elapsed().as_secs() / 60)
                 } else {

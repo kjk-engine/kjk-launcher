@@ -50,44 +50,27 @@ pub(super) fn start(ctx: &egui::Context) {
     }
 }
 
-/// The top bar's margins and the height its content is centered in.
+/// The room kept free at each end of the top bar.
 pub(super) struct Bar {
-    pub margin: egui::Margin,
-    pub height: f32,
+    pub left: f32,
+    pub right: f32,
 }
 
 pub(super) fn bar(ctx: &egui::Context) -> Bar {
-    let side = theme::SPACE_8 as i8;
+    let side = theme::SPACE_8;
     match kind() {
         Kind::MacMerged => {
             let fullscreen = ctx.input(|i| i.viewport().fullscreen) == Some(true);
-            let left = if fullscreen {
-                theme::SPACE_8
-            } else {
-                theme::MAC_BUTTONS
-            };
-            Bar {
-                margin: egui::Margin {
-                    left: left as i8,
-                    right: side,
-                    top: 0,
-                    bottom: theme::SPACE_2 as i8,
-                },
-                height: theme::MAC_TITLE_BAR,
-            }
+            let left = if fullscreen { side } else { theme::MAC_BUTTONS };
+            Bar { left, right: side }
         }
         Kind::WindowsMerged => Bar {
-            margin: egui::Margin {
-                left: side,
-                right: 0,
-                top: 0,
-                bottom: theme::SPACE_2 as i8,
-            },
-            height: theme::WINDOW_BUTTON.y,
+            left: side,
+            right: 0.0,
         },
         Kind::System => Bar {
-            margin: egui::Margin::symmetric(side, theme::SPACE_3 as i8),
-            height: theme::MARK,
+            left: side,
+            right: side,
         },
     }
 }

@@ -38,8 +38,10 @@ pub const FOCUS_WIDTH: f32 = 2.0;
 pub const FOCUS_GAP: f32 = 2.0;
 /// The status dot's diameter.
 pub const DOT: f32 = 8.0;
+/// The top bar's height, with its hairline at the bottom.
+pub const TOP_BAR: f32 = 48.0;
 /// The mark's side in the top bar.
-pub const MARK: f32 = 28.0;
+pub const MARK: f32 = 20.0;
 /// The progress line's height.
 pub const PROGRESS: f32 = 2.0;
 /// The chevron after the version title.
@@ -51,19 +53,26 @@ pub const MENU_WIDTH: f32 = 360.0;
 pub const MENU_HEIGHT: f32 = 320.0;
 /// A menu row's height.
 pub const ROW: f32 = 32.0;
+/// A row's height on the Versions page.
+pub const VERSION_ROW: f32 = 36.0;
+/// The height of a compact button and a number field.
+pub const COMPACT: f32 = 24.0;
+/// A number field's smallest width.
+pub const NUMBER_WIDTH: f32 = 40.0;
+/// The height of the footer's line.
+pub const FOOTER_ROW: f32 = 32.0;
 
 /// A dialog's widest content.
 pub const DIALOG_WIDTH: f32 = 440.0;
 
 /// macOS: the room the three window buttons take at the left of the top
-/// bar, and the height of the title bar they are centered in.
+/// bar.
 pub const MAC_BUTTONS: f32 = 80.0;
-pub const MAC_TITLE_BAR: f32 = 28.0;
 
-/// Windows: a window button's area, the size of its glyph, how far the
+/// Windows: a window button's area (as high as the top bar), the size of its glyph, how far the
 /// two squares of the restore glyph are apart, and the edge zone that
 /// resizes the window.
-pub const WINDOW_BUTTON: egui::Vec2 = egui::vec2(46.0, 32.0);
+pub const WINDOW_BUTTON: egui::Vec2 = egui::vec2(46.0, TOP_BAR);
 pub const WINDOW_GLYPH: f32 = 10.0;
 pub const RESTORE_OFFSET: f32 = 2.0;
 pub const RESIZE_EDGE: f32 = 6.0;
@@ -87,7 +96,7 @@ pub enum Text {
     Label,
     /// Paths and tags: 12, Geist Mono Regular.
     Mono,
-    /// "kjk-engine" in the top bar: 18, Geist Mono Medium.
+    /// "kjk-engine" in the top bar: 14, Geist Mono Medium.
     Wordmark,
 }
 
@@ -138,7 +147,7 @@ pub fn font(text: Text) -> FontId {
         Text::Body => (14.0, FontFamily::Proportional),
         Text::Label => (12.0, named(GEIST_MEDIUM)),
         Text::Mono => (12.0, FontFamily::Monospace),
-        Text::Wordmark => (18.0, named(GEIST_MONO_MEDIUM)),
+        Text::Wordmark => (14.0, named(GEIST_MONO_MEDIUM)),
     };
     FontId::new(size, family)
 }
@@ -237,14 +246,17 @@ fn visuals(v: &mut egui::Visuals) {
     }
 }
 
-/// The kjk mark, as a texture for the top bar.
+/// The kjk mark, as a texture for the top bar. The picture is more than
+/// three times the drawn size and is drawn with linear filtering between
+/// mipmaps, so it stays sharp when it is drawn small.
 pub fn mark(ctx: &egui::Context) -> Option<egui::TextureHandle> {
     let bytes = include_bytes!("../assets/kjk-mark.png");
     let picture = image::load_from_memory_with_format(bytes, image::ImageFormat::Png).ok()?;
     let rgba = picture.to_rgba8();
     let size = [rgba.width() as usize, rgba.height() as usize];
     let image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
-    Some(ctx.load_texture("kjk-mark", image, egui::TextureOptions::LINEAR))
+    let options = egui::TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear));
+    Some(ctx.load_texture("kjk-mark", image, options))
 }
 
 #[cfg(test)]
@@ -260,7 +272,7 @@ mod tests {
             (Text::Body, 14.0),
             (Text::Label, 12.0),
             (Text::Mono, 12.0),
-            (Text::Wordmark, 18.0),
+            (Text::Wordmark, 14.0),
         ];
         for (text, size) in sizes {
             assert_eq!(font(text).size, size, "{text:?}");

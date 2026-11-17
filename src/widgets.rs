@@ -37,11 +37,83 @@ pub fn primary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
 
 /// A secondary button: a 1px `CONTROL_BORDER` outline and no fill.
 pub fn secondary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
-    let button = egui::Button::new(text(label, Text::Body, theme::INK))
+    add(ui, outlined(label, Text::Body))
+}
+
+fn outlined(label: &str, style: Text) -> egui::Button<'static> {
+    egui::Button::new(text(label, style, theme::INK))
         .fill(egui::Color32::TRANSPARENT)
         .stroke(Stroke::new(theme::HAIRLINE, theme::CONTROL_BORDER))
-        .corner_radius(CornerRadius::same(theme::RADIUS_MD));
-    add(ui, button)
+        .corner_radius(CornerRadius::same(theme::RADIUS_MD))
+}
+
+/// A compact secondary button for the end of a row or the side of a line
+/// of text: label-size words, `COMPACT` high, `SPACE_3` at each side.
+pub fn compact_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let button = outlined(label, Text::Label).min_size(egui::vec2(0.0, theme::COMPACT));
+    ui.scope(|ui| {
+        ui.spacing_mut().button_padding = egui::vec2(theme::SPACE_3, 0.0);
+        add(ui, button)
+    })
+    .inner
+}
+
+/// A compact number field, `COMPACT` high, that takes whole numbers in
+/// `range`.
+pub fn number_field(
+    ui: &mut egui::Ui,
+    value: &mut usize,
+    range: std::ops::RangeInclusive<usize>,
+) -> egui::Response {
+    ui.scope(|ui| {
+        let spacing = ui.spacing_mut();
+        spacing.button_padding = egui::vec2(theme::SPACE_2, 0.0);
+        spacing.interact_size = egui::vec2(theme::NUMBER_WIDTH, theme::COMPACT);
+        add(ui, egui::DragValue::new(value).range(range))
+    })
+    .inner
+}
+
+/// A line of controls and words, all centred on one line `COMPACT` high.
+pub fn line<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let size = egui::vec2(ui.available_width(), theme::COMPACT);
+    let layout = egui::Layout::left_to_right(egui::Align::Center);
+    ui.allocate_ui_with_layout(size, layout, add).inner
+}
+
+/// How far below the top of a line of text in `style` the middle of its
+/// lower-case letters is. Text whose top is put this far above a line has
+/// its x-height centred on that line.
+pub fn x_middle(ui: &egui::Ui, style: Text) -> f32 {
+    let galley = ui
+        .painter()
+        .layout_no_wrap("x".into(), theme::font(style), theme::INK);
+    let Some(row) = galley.rows.first() else {
+        return galley.size().y / 2.0;
+    };
+    match row.glyphs.first() {
+        Some(x) => row.pos.y + x.pos.y + x.uv_rect.offset.y + x.uv_rect.size.y / 2.0,
+        None => galley.size().y / 2.0,
+    }
+}
+
+/// Paints `words` with the middle of their x-height on `middle_y`, from
+/// `left`, and returns where they are.
+pub fn paint_centred(
+    ui: &egui::Ui,
+    words: &str,
+    style: Text,
+    color: egui::Color32,
+    left: f32,
+    middle_y: f32,
+) -> egui::Rect {
+    let galley = ui
+        .painter()
+        .layout_no_wrap(words.to_string(), theme::font(style), color);
+    let top = egui::pos2(left, middle_y - x_middle(ui, style));
+    let rect = egui::Rect::from_min_size(top, galley.size());
+    ui.painter().galley(top, galley, color);
+    rect
 }
 
 /// A button that is only its words, such as "Show details".
@@ -54,6 +126,12 @@ pub fn text_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
 /// the keyboard focus.
 pub fn add(ui: &mut egui::Ui, widget: impl egui::Widget) -> egui::Response {
     let response = ui.add(widget);
+    focus_outline(ui, &response);
+    response
+}
+
+/// The focus outline of `add`, for a control drawn by hand.
+pub fn focus_outline(ui: &egui::Ui, response: &egui::Response) {
     if response.has_focus() {
         let gap = theme::FOCUS_GAP + theme::FOCUS_WIDTH / 2.0;
         ui.painter().rect_stroke(
@@ -63,7 +141,6 @@ pub fn add(ui: &mut egui::Ui, widget: impl egui::Widget) -> egui::Response {
             egui::StrokeKind::Middle,
         );
     }
-    response
 }
 
 /// An 8px dot in the status color, then the word in the label style. In a
