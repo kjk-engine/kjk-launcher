@@ -250,16 +250,88 @@ fn visuals(v: &mut egui::Visuals) {
     }
 }
 
-/// The kjk mark, as a texture for the top bar: the band of kjk's logo
-/// (`docs/logo/kjk.svg` in kjk) without its square, cropped to the band and
-/// drawn at four times its height in the bar. It is drawn with linear
-/// filtering between mipmaps, so it stays sharp when it is drawn small.
-pub fn mark(ctx: &egui::Context) -> Option<egui::TextureHandle> {
-    let rgba = picture(include_bytes!("../assets/kjk-bar-mark.png"))?;
-    let size = [rgba.width() as usize, rgba.height() as usize];
-    let image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
-    let options = egui::TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear));
-    Some(ctx.load_texture("kjk-mark", image, options))
+/// The kjk mark for the top bar: the band of kjk's logo (`docs/logo/kjk.svg`
+/// in kjk) without its square, cropped to the band. The picture is four times
+/// the bar's height. egui's wgpu renderer makes no mipmaps, so drawing it
+/// straight away at a quarter of its size skips most of its thin lines and
+/// they look jagged. The mark is therefore scaled on the CPU to the exact
+/// number of screen pixels it covers, and scaled again when the window moves
+/// to a screen with another scale.
+pub struct Mark {
+    source: image::RgbaImage,
+    texture: Option<(f32, egui::TextureHandle)>,
+}
+
+impl Mark {
+    pub fn new() -> Option<Self> {
+        let mut source = picture(include_bytes!("../assets/kjk-bar-mark.png"))?;
+        // Scaling mixes neighbouring pixels. Without premultiplying, the colour
+        // of the transparent pixels around the lines would darken their edges.
+        for pixel in source.pixels_mut() {
+            let [r, g, b, a] = pixel.0;
+            let scale = |c: u8| ((c as u16 * a as u16 + 127) / 255) as u8;
+            pixel.0 = [scale(r), scale(g), scale(b), a];
+        }
+        Some(Self {
+            source,
+            texture: None,
+        })
+    }
+
+    /// The mark's size in points.
+    pub fn size(&self) -> egui::Vec2 {
+        let aspect = self.source.width() as f32 / self.source.height() as f32;
+        egui::vec2(MARK * aspect, MARK)
+    }
+
+    /// The mark's size in screen pixels at `pixels_per_point`.
+    fn pixels(&self, pixels_per_point: f32) -> [u32; 2] {
+        let size = self.size() * pixels_per_point;
+        [
+            size.x.round().max(1.0) as u32,
+            size.y.round().max(1.0) as u32,
+        ]
+    }
+
+    /// Scales the picture for the window's current scale, if it changed.
+    pub fn refresh(&mut self, ctx: &egui::Context) {
+        let ppp = ctx.pixels_per_point();
+        if self
+            .texture
+            .as_ref()
+            .is_some_and(|(built, _)| *built == ppp)
+        {
+            return;
+        }
+        let [width, height] = self.pixels(ppp);
+        let scaled = image::imageops::resize(
+            &self.source,
+            width,
+            height,
+            image::imageops::FilterType::Triangle,
+        );
+        let image = egui::ColorImage::from_rgba_premultiplied(
+            [width as usize, height as usize],
+            scaled.as_raw(),
+        );
+        let texture = ctx.load_texture("kjk-mark", image, egui::TextureOptions::LINEAR);
+        self.texture = Some((ppp, texture));
+    }
+
+    /// Paints the mark with its left edge at `left`, centred on `middle`, and
+    /// returns where it ends. The corner sits on a whole screen pixel, so each
+    /// pixel of the texture covers exactly one pixel of the screen.
+    pub fn paint(&self, ui: &egui::Ui, left: f32, middle: f32) -> f32 {
+        let size = self.size();
+        let Some((ppp, texture)) = &self.texture else {
+            return left + size.x;
+        };
+        let [width, height] = self.pixels(*ppp);
+        let exact = egui::vec2(width as f32, height as f32) / *ppp;
+        let corner = (egui::pos2(left, middle - exact.y / 2.0) * *ppp).round() / *ppp;
+        egui::Image::new(texture).paint_at(ui, egui::Rect::from_min_size(corner, exact));
+        left + size.x
+    }
 }
 
 /// The window's icon for the taskbar and the window list: kjk's logo.

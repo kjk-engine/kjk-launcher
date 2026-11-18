@@ -215,7 +215,7 @@ struct Ready {
     /// Opened by `--play`: after Play the window hides, and the launcher
     /// exits when kjk does.
     from_steam: bool,
-    mark: Option<egui::TextureHandle>,
+    mark: Option<theme::Mark>,
     /// What the selected version reports about its game folders and ffmpeg.
     games: Games,
     /// The report being asked for, on a background thread.
@@ -276,7 +276,7 @@ impl App {
                     tab: Tab::from_env(),
                     args,
                     from_steam: steam.is_some(),
-                    mark: theme::mark(ctx),
+                    mark: theme::Mark::new(),
                     games: Games::Stale,
                     asking: None,
                     ffmpeg_dialog: shot::ffmpeg_open(),
@@ -787,6 +787,9 @@ impl Ready {
     fn update(&mut self, ui: &mut egui::Ui) {
         let ctx = &ui.ctx().clone();
         self.poll();
+        if let Some(mark) = &mut self.mark {
+            mark.refresh(ctx);
+        }
         let pressed = ctx.input(|i| {
             i.events.iter().any(|event| {
                 matches!(
@@ -876,16 +879,12 @@ impl Ready {
         self.shot.frame(ctx, busy);
     }
 
-    /// The mark's size in the top bar.
-    fn mark_size(&self) -> Option<egui::Vec2> {
-        self.mark
-            .as_ref()
-            .map(|mark| egui::vec2(theme::MARK * mark.aspect_ratio(), theme::MARK))
-    }
-
     /// How wide the mark and the word "kjk-engine" are together.
     fn name_width(&self, ui: &egui::Ui) -> f32 {
-        let mark = self.mark_size().map_or(0.0, |size| size.x + theme::SPACE_2);
+        let mark = self
+            .mark
+            .as_ref()
+            .map_or(0.0, |mark| mark.size().x + theme::SPACE_2);
         mark + widgets::width(ui, "kjk-engine", Text::Wordmark)
     }
 
@@ -893,10 +892,8 @@ impl Ready {
     /// `middle`, and returns where they end.
     fn name(&self, ui: &egui::Ui, left: f32, middle: f32) -> f32 {
         let mut x = left;
-        if let (Some(mark), Some(size)) = (&self.mark, self.mark_size()) {
-            let rect = egui::Rect::from_min_size(egui::pos2(x, middle - size.y / 2.0), size);
-            egui::Image::new(mark).paint_at(ui, rect);
-            x = rect.right() + theme::SPACE_2;
+        if let Some(mark) = &self.mark {
+            x = mark.paint(ui, x, middle) + theme::SPACE_2;
         }
         widgets::paint_centred(ui, "kjk-engine", Text::Wordmark, theme::INK, x, middle).right()
     }
