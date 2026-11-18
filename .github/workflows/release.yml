@@ -111,4 +111,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --draft $prerelease \
             --title "kjk launcher ${TAG#v}" \
-            --notes "Unsigned builds for Windows, macOS and Linux. SHA256SUMS lists the checksum of each file. Version 0.1.0 cannot update itself. Replace it with 0.2.0 by hand once."
+            --notes "These are unsigned builds for Windows, macOS and Linux. SHA256SUMS lists the checksum of each file. Version 0.2.0 and later update themselves. Version 0.1.0 cannot update itself, so replace it with ${TAG#v} by hand once."
