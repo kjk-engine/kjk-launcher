@@ -1,6 +1,6 @@
 [package]
 name = "kjk-launcher"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Launcher for kjk that checks GitHub for new releases and installs them only when asked"
 license = "MIT"
