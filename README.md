@@ -59,6 +59,26 @@ Steam counts the whole session. The launcher opens its window instead when
 no version is installed, when a new version is offered, or when a game
 folder is missing.
 
+## ReShade
+
+ReShade works on Windows. Set it up once, and it stays set up when kjk
+updates.
+
+1. Run ReShade's setup.
+2. When it asks for a game, choose `kjk-launcher.exe`.
+3. When it asks for the rendering API, choose Vulkan. kjk draws with
+   Vulkan, so the other choices do nothing in kjk.
+4. Start kjk with the launcher's Play button.
+
+ReShade's setup puts `ReShade.ini`, your presets and the `reshade-shaders`
+folder beside `kjk-launcher.exe`. When that `ReShade.ini` is there, the
+launcher tells ReShade to use that folder for kjk. ReShade's log,
+`ReShade.log`, is written there too.
+
+Players have reported that ReShade 5.8.0 works with kjk and that ReShade
+6.8.0 stops kjk from starting. If a newer ReShade stops kjk from starting,
+send `ReShade.log` with your report.
+
 ## Steam Deck
 
 The launcher can be used with the Steam Deck's controls alone. Add the

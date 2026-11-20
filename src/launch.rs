@@ -91,7 +91,9 @@ pub fn play(paths: &Paths, config: &mut Config, args: &[String]) -> Result<Start
         config.launched.push(tag.clone());
         config.save(paths)?;
     }
-    let child = start(&version.dir, &install::game_exe(&version.dir), args)?;
+    let mut env = crate::config::kjk_env();
+    env.extend(reshade_env());
+    let child = start(&version.dir, &install::game_exe(&version.dir), args, &env)?;
     Ok(Started {
         tag,
         backup: taken,
@@ -102,7 +104,7 @@ pub fn play(paths: &Paths, config: &mut Config, args: &[String]) -> Result<Start
 pub fn save_editor(paths: &Paths, config: &Config) -> Result<(), String> {
     let version = current(paths, config)?;
     let editor = install::editor_exe(&version.dir).ok_or("this version has no save editor")?;
-    start(&version.dir, &editor, &[]).map(drop)
+    start(&version.dir, &editor, &[], &crate::config::kjk_env()).map(drop)
 }
 
 fn current(paths: &Paths, config: &Config) -> Result<Installed, String> {
@@ -114,16 +116,43 @@ fn current(paths: &Paths, config: &Config) -> Result<Installed, String> {
         .ok_or_else(|| format!("{} is not installed any more.", crate::versions::title(tag)))
 }
 
-/// Starts kjk or its save editor, with the variables of
-/// `config::kjk_env` while kjk's folder is moved.
-fn start(dir: &Path, program: &Path, args: &[String]) -> Result<Child, String> {
-    let env = crate::config::kjk_env();
+/// ReShade reads its settings, presets and shaders from the folder this
+/// variable names, in place of the folder of the program it is drawing in.
+const RESHADE_FOLDER: &str = "RESHADE_BASE_PATH_OVERRIDE";
+
+/// The variable that makes ReShade draw in kjk with the settings beside the
+/// launcher. Every version of kjk has its own folder, so settings beside
+/// `kjk.exe` would be gone after each update. ReShade's setup writes
+/// `ReShade.ini` beside the program the player picks, and ReShade's Vulkan
+/// layer draws only in a program whose folder has that file.
+fn reshade_env() -> Option<(&'static str, PathBuf)> {
+    if !cfg!(windows) || std::env::var_os(RESHADE_FOLDER).is_some() {
+        return None;
+    }
+    reshade_beside(std::env::current_exe().ok()?.parent()?)
+}
+
+/// `reshade_env` for a launcher in `launcher_dir`.
+fn reshade_beside(launcher_dir: &Path) -> Option<(&'static str, PathBuf)> {
+    launcher_dir
+        .join("ReShade.ini")
+        .is_file()
+        .then(|| (RESHADE_FOLDER, launcher_dir.to_path_buf()))
+}
+
+/// Starts kjk or its save editor with the variables in `env`.
+fn start(
+    dir: &Path,
+    program: &Path,
+    args: &[String],
+    env: &[(&'static str, PathBuf)],
+) -> Result<Child, String> {
     let mut command = if cfg!(target_os = "macos") {
         // -W waits until the app quits, so the child lives as long as kjk.
         // An app started by `open` gets its variables only through --env.
         let mut open = Command::new("open");
         open.arg("-W").arg("-n");
-        for (name, value) in &env {
+        for (name, value) in env {
             open.arg("--env").arg(format!("{name}={}", value.display()));
         }
         open.arg(program).arg("--args").args(args);
@@ -230,6 +259,14 @@ mod tests {
         for (exe, expected) in cases {
             assert_eq!(is_installed_kjk(Path::new(exe), install), expected, "{exe}");
         }
+    }
+
+    #[test]
+    fn reshade_settings_beside_the_launcher_are_used() {
+        let dir = scratch("reshade").root;
+        assert_eq!(reshade_beside(&dir), None);
+        std::fs::write(dir.join("ReShade.ini"), "").unwrap();
+        assert_eq!(reshade_beside(&dir), Some((RESHADE_FOLDER, dir.clone())));
     }
 
     #[test]
