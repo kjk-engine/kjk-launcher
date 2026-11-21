@@ -72,12 +72,14 @@ updates.
 
 ReShade's setup puts `ReShade.ini`, your presets and the `reshade-shaders`
 folder beside `kjk-launcher.exe`. When that `ReShade.ini` is there, the
-launcher tells ReShade to use that folder for kjk. ReShade's log,
-`ReShade.log`, is written there too.
+launcher tells ReShade to use that folder for kjk, and the launcher and kjk
+draw with Vulkan alone. ReShade also draws in the launcher's own window.
 
-Players have reported that ReShade 5.8.0 works with kjk and that ReShade
-6.8.0 stops kjk from starting. If a newer ReShade stops kjk from starting,
-send `ReShade.log` with your report.
+ReShade writes two logs in that folder: `ReShade.log` for the launcher, and
+one for kjk (`ReShade2.log` with ReShade 5, `ReShade.log1` with ReShade 6).
+
+ReShade 5.8.0 and 6.8.0 work with kjk. If ReShade stops kjk from starting,
+send both logs with your report.
 
 ## Steam Deck
 

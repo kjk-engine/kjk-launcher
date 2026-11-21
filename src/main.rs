@@ -8,6 +8,7 @@ use kjk_launcher::args::{self, Mode};
 /// kjk at once for Steam's launch options, and opens the window only when
 /// the player is needed.
 fn main() -> eframe::Result {
+    kjk_launcher::launch::vulkan_alone_under_reshade();
     if let Some(home) = kjk_launcher::selfupdate::home() {
         kjk_launcher::selfupdate::clean(&home);
     }

@@ -120,24 +120,50 @@ fn current(paths: &Paths, config: &Config) -> Result<Installed, String> {
 /// variable names, in place of the folder of the program it is drawing in.
 const RESHADE_FOLDER: &str = "RESHADE_BASE_PATH_OVERRIDE";
 
-/// The variable that makes ReShade draw in kjk with the settings beside the
+/// Set, this variable makes ReShade's Vulkan layer draw in a program whose
+/// folder has no `ReShade.ini`. ReShade 5 looks for that file beside the
+/// program's own exe before it reads `RESHADE_FOLDER`; ReShade 6 looks in
+/// the folder `RESHADE_FOLDER` names, so it needs only that variable.
+const RESHADE_ANY_PROGRAM: &str = "RESHADE_DISABLE_LOADING_CHECK";
+
+/// wgpu's variable for the graphics APIs it may use.
+const WGPU_APIS: &str = "WGPU_BACKEND";
+
+/// With ReShade set up beside the launcher, makes the launcher and the kjk
+/// it starts (which inherits the variable) use Vulkan alone. ReShade 6.6
+/// and later crash in `dxgi.dll` when wgpu also sets up DirectX 12 to look
+/// for graphics cards, before either program can draw; ReShade 5.8 does
+/// not. Called first in `main`, before any window or thread is made.
+pub fn vulkan_alone_under_reshade() {
+    if std::env::var_os(WGPU_APIS).is_none() && !reshade_env().is_empty() {
+        std::env::set_var(WGPU_APIS, "vulkan");
+    }
+}
+
+/// The variables that make ReShade draw in kjk with the settings beside the
 /// launcher. Every version of kjk has its own folder, so settings beside
 /// `kjk.exe` would be gone after each update. ReShade's setup writes
 /// `ReShade.ini` beside the program the player picks, and ReShade's Vulkan
 /// layer draws only in a program whose folder has that file.
-fn reshade_env() -> Option<(&'static str, PathBuf)> {
+fn reshade_env() -> Vec<(&'static str, PathBuf)> {
     if !cfg!(windows) || std::env::var_os(RESHADE_FOLDER).is_some() {
-        return None;
+        return Vec::new();
     }
-    reshade_beside(std::env::current_exe().ok()?.parent()?)
+    match std::env::current_exe() {
+        Ok(exe) => exe.parent().map(reshade_beside).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// `reshade_env` for a launcher in `launcher_dir`.
-fn reshade_beside(launcher_dir: &Path) -> Option<(&'static str, PathBuf)> {
-    launcher_dir
-        .join("ReShade.ini")
-        .is_file()
-        .then(|| (RESHADE_FOLDER, launcher_dir.to_path_buf()))
+fn reshade_beside(launcher_dir: &Path) -> Vec<(&'static str, PathBuf)> {
+    if !launcher_dir.join("ReShade.ini").is_file() {
+        return Vec::new();
+    }
+    vec![
+        (RESHADE_FOLDER, launcher_dir.to_path_buf()),
+        (RESHADE_ANY_PROGRAM, PathBuf::from("1")),
+    ]
 }
 
 /// Starts kjk or its save editor with the variables in `env`.
@@ -264,9 +290,15 @@ mod tests {
     #[test]
     fn reshade_settings_beside_the_launcher_are_used() {
         let dir = scratch("reshade").root;
-        assert_eq!(reshade_beside(&dir), None);
+        assert_eq!(reshade_beside(&dir), Vec::new());
         std::fs::write(dir.join("ReShade.ini"), "").unwrap();
-        assert_eq!(reshade_beside(&dir), Some((RESHADE_FOLDER, dir.clone())));
+        assert_eq!(
+            reshade_beside(&dir),
+            vec![
+                (RESHADE_FOLDER, dir.clone()),
+                (RESHADE_ANY_PROGRAM, PathBuf::from("1")),
+            ]
+        );
     }
 
     #[test]
