@@ -45,6 +45,8 @@ impl Ready {
         }
         ui.add_space(theme::SPACE_6);
 
+        self.lighting_section(ui, ctx);
+
         widgets::section_label(ui, "Storage");
         changed |= widgets::checkbox(
             ui,

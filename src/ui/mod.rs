@@ -3,6 +3,7 @@
 
 mod dialogs;
 mod frame;
+mod lighting;
 mod play;
 mod settings;
 mod versions;
@@ -23,7 +24,7 @@ use crate::versions as release_menu;
 use crate::widgets::{self, Status};
 use eframe::egui;
 use std::cmp::Ordering as CmpOrdering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc};
@@ -98,6 +99,16 @@ enum Outcome {
     /// this one has closed).
     SelfUpdateFailed {
         link: String,
+    },
+    /// A download of the new lighting for a game ended.
+    Lighting {
+        game: Game,
+        result: Result<crate::lighting::Outcome, String>,
+    },
+    /// The new lighting of a game was removed, or why it was not.
+    LightingRemoved {
+        game: Game,
+        result: Result<(), String>,
     },
 }
 
@@ -241,6 +252,14 @@ struct Ready {
     /// first presses a key or clicks, so Enter alone starts the game.
     focus_start: bool,
     shot: Shot,
+    /// What the selected version says about the new lighting.
+    lighting: lighting::Lighting,
+    /// The answer about the new lighting, asked on a background thread.
+    lighting_asking: Option<mpsc::Receiver<crate::lighting::Status>>,
+    /// What the last download of the new lighting found, by game.
+    lighting_done: HashMap<&'static str, crate::lighting::Outcome>,
+    /// The games whose list of areas with the game's own lighting is open.
+    lighting_open: HashSet<&'static str>,
 }
 
 enum App {
@@ -289,6 +308,10 @@ impl App {
                     confirm_problem: None,
                     focus_start: true,
                     shot: Shot::from_env(),
+                    lighting: lighting::Lighting::Stale,
+                    lighting_asking: None,
+                    lighting_done: HashMap::new(),
+                    lighting_open: HashSet::new(),
                 };
                 ready.typed = shot::typed_open().map(|text| TypedPath {
                     folder_for: FolderFor::KjkFolder,
@@ -686,6 +709,7 @@ impl Ready {
 
     fn poll(&mut self) {
         self.poll_folder_check();
+        self.poll_lighting();
         if let Some(rx) = &self.checking {
             if let Ok((releases, launcher)) = rx.try_recv() {
                 self.checking = None;
@@ -715,6 +739,9 @@ impl Ready {
         let Some(outcome) = finished else { return };
         self.job = None;
         match outcome {
+            outcome @ (Outcome::Lighting { .. } | Outcome::LightingRemoved { .. }) => {
+                self.lighting_finished(outcome);
+            }
             Outcome::KjkMoved { from, to, result } => {
                 // An install folder inside kjk's folder moved with it.
                 if result.is_ok() {
@@ -782,6 +809,7 @@ impl Ready {
             || self.checking.is_some()
             || self.asking.is_some()
             || self.folder_check.is_some()
+            || self.lighting_asking.is_some()
     }
 
     fn update(&mut self, ui: &mut egui::Ui) {
@@ -1059,6 +1087,8 @@ impl Ready {
     fn progress(&mut self, ui: &mut egui::Ui) {
         let Some(job) = &self.job else { return };
         let (stage, done, total) = job.progress.snapshot();
+        let items = job.items || job.progress.items.load(Ordering::Relaxed);
+        let cancellable = job.cancellable && !job.progress.locked.load(Ordering::Relaxed);
         let fraction = if total > 0 {
             done as f32 / total as f32
         } else {
@@ -1069,17 +1099,17 @@ impl Ready {
             ui,
             |ui| {
                 ui.label(widgets::text(&job.title, Text::Heading, theme::INK));
-                let amount = if job.items {
-                    format!("{stage}. {done} of {total}.")
-                } else if total == 0 {
+                let amount = if total == 0 {
                     format!("{stage}.")
+                } else if items {
+                    format!("{stage}. {done} of {total}.")
                 } else {
                     format!("{stage}. {} of {}.", size(done), size(total))
                 };
                 widgets::muted(ui, amount);
             },
             |ui| {
-                if job.cancellable {
+                if cancellable {
                     cancel = widgets::compact_button(ui, "Cancel").clicked();
                 }
             },

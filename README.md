@@ -42,6 +42,33 @@ Version 0.1.0 cannot update itself. Replace it with 0.2.0 by hand once.
 - The launcher works offline. It then says that it could not check GitHub
   for updates, and Play still works.
 
+## New lighting
+
+The new lighting is an optional download for KOTOR and KOTOR II. It is made
+for KOTOR with the K1 Community Patch installed, and for KOTOR II with TSLRCM
+installed. The Settings page has a "New lighting" section with a row for each
+of the two games that kjk finds.
+
+1. The launcher first downloads only a small list of the download's areas.
+   kjk compares that list with your game files.
+2. When too few areas match, kjk says why, and the launcher downloads
+   nothing more.
+3. Otherwise the launcher downloads the zip, checks it against the
+   release's `SHA256SUMS`, and kjk installs it.
+4. To use the new lighting, start kjk again, open Options, and set Lighting
+   to Enhanced Lightmaps.
+
+A cancelled or failed download deletes what it downloaded, so nothing is left
+half installed. The next try starts the download again from the beginning.
+"Remove" removes the new lighting of that game.
+
+The downloads are on the kjk releases whose tag starts with `lighting-`.
+`KJK_LIGHTING_SOURCE=<folder>` takes the same files from a folder instead:
+`kjk-lighting-<k1|tsl>-<label>.zip`, the list `kjk-lighting-<k1|tsl>-<label>.txt`
+and `SHA256SUMS`. `kjk-launcher-cli lighting` shows the state, and
+`kjk-launcher-cli lighting download k1` and `lighting remove k1` do the same as
+the buttons.
+
 ## Steam play time
 
 Steam can count the time you play kjk under KOTOR or KOTOR II. Open the

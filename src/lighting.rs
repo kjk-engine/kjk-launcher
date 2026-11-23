@@ -930,6 +930,37 @@ mod tests {
         assert!(fs::read_dir(&into).unwrap().next().is_none());
     }
 
+    /// The whole flow with a real kjk, cancelled half way through the zip:
+    /// `KJK_LIGHTING_TRIAL_KJK=<kjk.exe>` with `KJK_LIGHTING_SOURCE`,
+    /// `KJK_STORE` and the game's folder set, then
+    /// `cargo test -- --ignored cancelled_mid_download`.
+    #[test]
+    #[ignore]
+    fn cancelled_mid_download_leaves_nothing() {
+        let kjk = PathBuf::from(std::env::var_os("KJK_LIGHTING_TRIAL_KJK").unwrap());
+        let store = PathBuf::from(std::env::var_os("KJK_STORE").unwrap());
+        let offers = available(&[], Game::K1);
+        assert!(!offers.is_empty(), "no K1 download in KJK_LIGHTING_SOURCE");
+        let downloads = scratch("cancel-downloads");
+        let progress = std::sync::Arc::new(Progress::default());
+        let watcher = progress.clone();
+        let stopper = std::thread::spawn(move || loop {
+            let (stage, done, total) = watcher.snapshot();
+            if stage == "Downloading" && total > 0 && done > total / 2 {
+                watcher.cancel.store(true, Ordering::Relaxed);
+                return (done, total);
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        });
+        let result = download(&kjk, &offers, &downloads, &progress);
+        let (done, total) = stopper.join().unwrap();
+        eprintln!("cancelled at {done} of {total} bytes");
+        assert_eq!(result.unwrap_err(), "cancelled");
+        assert!(!download_dir(&downloads, Game::K1).exists());
+        assert!(!store.join("lighting").join("k1").exists());
+        assert!(!store.join("lighting").join("k1.partial").exists());
+    }
+
     #[test]
     fn a_download_without_sha256sums_is_refused() {
         let dir = source_folder("no-sums");
