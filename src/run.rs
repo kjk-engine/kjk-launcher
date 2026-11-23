@@ -1,4 +1,4 @@
-//! Running a helper program for a check (`kjk installs`, `ffmpeg -version`):
+//! Running a helper program for a check (`kjk installs`):
 //! without a console window on Windows, and stopped when it takes too long.
 
 use std::io::Read;

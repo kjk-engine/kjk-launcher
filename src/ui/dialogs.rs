@@ -1,5 +1,4 @@
-//! The dialogs: questions before a change, how to install ffmpeg, and a
-//! typed folder path.
+//! The dialogs: questions before a change and a typed folder path.
 
 use super::*;
 
@@ -24,51 +23,6 @@ fn path(at: &std::path::Path) -> Line {
 }
 
 impl Ready {
-    /// The "Install ffmpeg" dialog.
-    pub(super) fn ffmpeg_window(&mut self, ctx: &egui::Context) {
-        if !self.ffmpeg_dialog {
-            return;
-        }
-        let mut open = true;
-        let mut check = false;
-        let escape = dialog(ctx, "Install ffmpeg", |ui, first| {
-            match ffmpeg::install_hint() {
-                ffmpeg::Hint::Command(command) => {
-                    widgets::muted(ui, "Run this command in a terminal to install ffmpeg.");
-                    let mut copy = false;
-                    widgets::line(ui, |ui| {
-                        ui.label(widgets::text(command, Text::Mono, theme::INK));
-                        copy = widgets::compact_button(ui, "Copy").clicked();
-                    });
-                    if copy {
-                        ui.ctx().copy_text(command.to_string());
-                    }
-                    widgets::muted(ui, "The ffmpeg website lists other ways to install it.");
-                }
-                ffmpeg::Hint::SteamOs => widgets::muted(
-                    ui,
-                    "SteamOS does not let programs be installed with a command. See the ffmpeg download page.",
-                ),
-                ffmpeg::Hint::LinkOnly => {}
-            }
-            widgets::link(ui, ffmpeg::DOWNLOAD_PAGE);
-            ui.add_space(theme::SPACE_3);
-            ui.horizontal(|ui| {
-                if main_button(ui, "Check again", first).clicked() {
-                    check = true;
-                }
-                if widgets::secondary_button(ui, "Close").clicked() {
-                    open = false;
-                }
-            });
-        });
-        if check {
-            self.games = Games::Stale;
-            open = false;
-        }
-        self.ffmpeg_dialog = open && !escape;
-    }
-
     /// The question before a change: its title, its lines, the words of
     /// its main button and, when there is one, of the other answer.
     fn question(&self, confirm: &Confirm) -> Question {

@@ -3,7 +3,6 @@
 //! frames and nothing is loading, then closes it.
 //! `KJK_LAUNCHER_TAB=play|versions|settings` picks the tab the
 //! window opens on. `KJK_LAUNCHER_MENU=1` opens the version menu, and
-//! `KJK_LAUNCHER_MENU=ffmpeg` opens the "Install ffmpeg" dialog.
 //! `KJK_LAUNCHER_MENU=move:<folder>` opens the dialog that asks to move
 //! kjk's folder there (nothing moves unless that dialog is answered).
 //! `KJK_LAUNCHER_MENU=type:<text>` opens the dialog for a typed folder path
@@ -163,11 +162,6 @@ pub fn tab() -> Option<String> {
 /// Whether `KJK_LAUNCHER_MENU=1` asks for the version menu to be open.
 pub fn menu_open() -> bool {
     std::env::var("KJK_LAUNCHER_MENU").is_ok_and(|v| v == "1")
-}
-
-/// Whether `KJK_LAUNCHER_MENU=ffmpeg` asks for the ffmpeg dialog to be open.
-pub fn ffmpeg_open() -> bool {
-    std::env::var("KJK_LAUNCHER_MENU").is_ok_and(|v| v == "ffmpeg")
 }
 
 /// How far `KJK_LAUNCHER_SCROLL` scrolls the page down, in points.

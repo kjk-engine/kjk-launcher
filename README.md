@@ -19,9 +19,7 @@ Version 0.1.0 cannot update itself. Replace it with 0.2.0 by hand once.
 - When a new version of kjk is out, the Play page says so. You can read the
   release notes, skip the version, or update.
 - The "Setup" list shows whether kjk finds KOTOR, KOTOR II and
-  Jedi Academy, and whether ffmpeg is installed. Play stays disabled until
-  kjk finds all three games. kjk plays without ffmpeg, but it skips the
-  movies.
+  Jedi Academy. Play stays disabled until kjk finds all three games.
 - Under the Setup list, the Play page shows the release notes of the
   selected version.
 - "Choose folder" lets you pick a game's folder. kjk checks the folder
@@ -103,9 +101,6 @@ you to type or paste the folder's full path instead. On Linux, a "Type a
 path" button sits next to each button that chooses a folder, because the
 launcher cannot always tell a missing folder dialog from a closed one.
 
-SteamOS does not let programs be installed with a command, so the "Install
-ffmpeg" dialog links to the ffmpeg download page instead.
-
 ## Where things are
 
 Everything is in one folder, the kjk folder. It is `%APPDATA%\kjk` on
@@ -156,7 +151,7 @@ Point these variables at scratch folders before a test run:
 | `KJK_LAUNCHER_OFFLINE=1` | The launcher acts as if GitHub could not be reached. |
 | `KJK_LAUNCHER_SHOT=<file.png>` | The launcher saves a picture of its window and closes. |
 | `KJK_LAUNCHER_TAB=versions` | The window opens on that page (play, versions or settings). |
-| `KJK_LAUNCHER_MENU=1` | The version menu is open. `ffmpeg` opens the "Install ffmpeg" dialog instead, `move:<folder>` the dialog that asks to move the kjk folder there, and `type:<text>` the dialog for a typed folder path with that text in it. |
+| `KJK_LAUNCHER_MENU=1` | The version menu is open. `move:<folder>` opens the dialog that asks to move the kjk folder there instead. `type:<text>` opens the dialog for a typed folder path with that text in it. |
 | `KJK_LAUNCHER_KEYS="tab tab enter"` | With `KJK_LAUNCHER_SHOT`, the launcher presses these keys one after another and saves a numbered picture after each. It knows tab, shift+tab, up, down, left, right, enter, space and escape. |
 | `KJK_LAUNCHER_TYPE_PATHS=1` | Every button that chooses a folder opens the launcher's dialog for a typed path instead of the system's folder dialog. |
 | `KJK_LAUNCHER_SCROLL=400` | The Versions or Settings page is scrolled down that many points. |

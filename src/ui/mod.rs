@@ -9,7 +9,6 @@ mod versions;
 
 use crate::backup::{self, Backup};
 use crate::config::{self, Config, Paths};
-use crate::ffmpeg;
 use crate::folders;
 use crate::github::{self, Release, Releases};
 use crate::install::{self, Installed, Moved, Progress};
@@ -129,9 +128,8 @@ enum Games {
     Stale,
     /// Asked, and waiting for the answer for this version.
     Asking(String),
-    /// The answer for this version (`None` when it cannot report), and
-    /// whether ffmpeg is installed.
-    Known(String, Option<Report>, bool),
+    /// The answer for this version (`None` when it cannot report).
+    Known(String, Option<Report>),
 }
 
 enum Notice {
@@ -216,12 +214,10 @@ struct Ready {
     /// exits when kjk does.
     from_steam: bool,
     mark: Option<theme::Mark>,
-    /// What the selected version reports about its game folders and ffmpeg.
+    /// What the selected version reports about its game folders.
     games: Games,
     /// The report being asked for, on a background thread.
-    asking: Option<mpsc::Receiver<(Option<Report>, bool)>>,
-    /// Whether the "Install ffmpeg" dialog is open.
-    ffmpeg_dialog: bool,
+    asking: Option<mpsc::Receiver<Option<Report>>>,
     /// Whether the full Setup list is open while all is ready.
     show_details: bool,
     /// Why a folder the player chose is not usable, by game.
@@ -279,7 +275,6 @@ impl App {
                     mark: theme::Mark::new(),
                     games: Games::Stale,
                     asking: None,
-                    ffmpeg_dialog: shot::ffmpeg_open(),
                     show_details: false,
                     folder_problems: HashMap::new(),
                     folder_check: None,
@@ -706,8 +701,7 @@ impl Ready {
             if let Ok(answer) = rx.try_recv() {
                 self.asking = None;
                 if let Games::Asking(tag) = &self.games {
-                    let (report, ffmpeg) = answer;
-                    self.games = Games::Known(tag.clone(), report, ffmpeg);
+                    self.games = Games::Known(tag.clone(), answer);
                 }
             }
         }
@@ -800,7 +794,7 @@ impl Ready {
             })
         });
         // An open dialog takes the focus instead.
-        let dialog = self.confirm.is_some() || self.typed.is_some() || self.ffmpeg_dialog;
+        let dialog = self.confirm.is_some() || self.typed.is_some();
         if pressed || dialog {
             self.focus_start = false;
         }
