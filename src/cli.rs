@@ -27,6 +27,9 @@ kjk-launcher-cli <command>
   unskip              offer the skipped release again
   pin | unpin         stay on the current version, or offer updates again
   prereleases on|off  offer and list pre-releases too
+  lighting            the new lighting for KOTOR and KOTOR II, as the current version sees it
+  lighting download <k1|tsl>  download and install the new lighting for a game
+  lighting remove <k1|tsl>    remove the new lighting of a game
 ";
 
 pub fn run(args: Vec<String>) -> Result<(), String> {
@@ -168,6 +171,7 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
             };
             config.save(&paths)
         }
+        "lighting" => lighting(&paths, &config, arg, args.get(2).map(String::as_str)),
         _ => {
             print!("{HELP}");
             Ok(())
@@ -260,24 +264,147 @@ fn list(paths: &Paths, config: &Config) -> Result<(), String> {
     Ok(())
 }
 
+/// `lighting [download|remove <game>]`, with the current version's kjk.
+fn lighting(
+    paths: &Paths,
+    config: &Config,
+    verb: Option<&str>,
+    game: Option<&str>,
+) -> Result<(), String> {
+    use crate::kjk_report::Game;
+    use crate::lighting::{self, Outcome, State, Status};
+    let current = config
+        .current
+        .as_deref()
+        .and_then(|tag| install::find(paths, tag))
+        .ok_or("no version is installed")?;
+    let kjk = install::game_binary(&current.dir);
+    let game = || {
+        game.and_then(Game::from_key)
+            .filter(|g| lighting::GAMES.contains(g))
+            .ok_or("which game? k1 or tsl")
+    };
+    let releases = || {
+        if lighting::source().is_some() {
+            return Vec::new();
+        }
+        let releases = github::fetch(paths);
+        if let Some(problem) = &releases.problem {
+            eprintln!("note: {problem}; using the last list seen");
+        }
+        releases.list
+    };
+    match verb {
+        None | Some("status") => {
+            let status = lighting::status(&kjk);
+            if status == Status::TooOld {
+                println!("{} has no lighting command", current.tag);
+                return Ok(());
+            }
+            let list = releases();
+            for game in lighting::GAMES {
+                let offers = lighting::available(&list, game);
+                let state = status.state(game).cloned().unwrap_or(State::Missing);
+                let words = match &state {
+                    State::Missing => "not installed".to_string(),
+                    State::Installed { areas, archive } => {
+                        format!("installed, {areas} areas, from {archive}")
+                    }
+                    State::Broken(why) => format!("installed but broken: {why}"),
+                    State::Failed(why) => format!("unknown: {why}"),
+                };
+                println!("{}: {words}", game.key());
+                match offers.first() {
+                    Some(offer) => println!(
+                        "  offered: {} from {} ({}){}",
+                        offer.zip.name,
+                        offer.tag,
+                        size(offer.zip.size),
+                        if lighting::newer(&state, offer) {
+                            ", newer than the installed one"
+                        } else {
+                            ""
+                        }
+                    ),
+                    None => println!("  no download offered"),
+                }
+            }
+            Ok(())
+        }
+        Some("download") => {
+            let game = game()?;
+            let offers = lighting::available(&releases(), game);
+            let progress = Arc::new(Progress::default());
+            let worker = {
+                let (kjk, downloads, progress) =
+                    (kjk.clone(), paths.downloads.clone(), progress.clone());
+                std::thread::spawn(move || lighting::download(&kjk, &offers, &downloads, &progress))
+            };
+            watch(&progress, || worker.is_finished());
+            let outcome = worker
+                .join()
+                .map_err(|_| "the download stopped unexpectedly".to_string())??;
+            match outcome {
+                Outcome::Installed { areas, check } => {
+                    println!(
+                        "installed the new lighting for {}, {areas} areas",
+                        game.key()
+                    );
+                    println!(
+                        "  {} of {} areas match; objects differ in {}; {} keep the game's lighting",
+                        check.matching,
+                        check.areas,
+                        check.placeables_differ.len(),
+                        check.fall_back.len()
+                    );
+                    for fall in &check.fall_back {
+                        println!("  {}: {}", fall.area, fall.why);
+                    }
+                }
+                Outcome::Refused { why } => println!("refused: {why}"),
+                Outcome::NeedsNewerKjk => println!("the download needs a newer kjk"),
+                Outcome::NeedsNewerDownload => println!("this kjk needs a newer download"),
+            }
+            Ok(())
+        }
+        Some("remove") => {
+            let game = game()?;
+            lighting::remove(&kjk, game)?;
+            println!("removed the new lighting for {}", game.key());
+            Ok(())
+        }
+        Some(other) => Err(format!("lighting {other}? Use download or remove.")),
+    }
+}
+
+/// Prints `progress` on one line until `finished`.
+fn watch(progress: &Progress, finished: impl Fn() -> bool) {
+    use std::sync::atomic::Ordering;
+    while !finished() {
+        let (stage, done, total) = progress.snapshot();
+        if progress.items.load(Ordering::Relaxed) {
+            eprint!("\r{stage}: {done} / {total}            ");
+        } else {
+            let percent = (done * 100).checked_div(total).unwrap_or(0);
+            eprint!(
+                "\r{stage}: {} / {} ({percent}%)   ",
+                size(done),
+                size(total)
+            );
+        }
+        let _ = std::io::stderr().flush();
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    eprintln!();
+}
+
 fn install_with_progress(paths: &Paths, release: &Release) -> Result<install::Installed, String> {
     let progress = Arc::new(Progress::default());
     let worker = {
         let (paths, release, progress) = (paths.clone(), release.clone(), progress.clone());
         std::thread::spawn(move || install::install(&paths, &release, &progress))
     };
-    while !worker.is_finished() {
-        let (stage, done, total) = progress.snapshot();
-        let percent = (done * 100).checked_div(total).unwrap_or(0);
-        eprint!(
-            "\r{stage}: {} / {} ({percent}%)   ",
-            size(done),
-            size(total)
-        );
-        let _ = std::io::stderr().flush();
-        std::thread::sleep(Duration::from_millis(250));
-    }
-    eprintln!();
+    watch(&progress, || worker.is_finished());
     worker
         .join()
         .map_err(|_| "the installer stopped unexpectedly".to_string())?

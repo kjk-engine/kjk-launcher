@@ -181,6 +181,10 @@ pub struct Progress {
     pub done: AtomicU64,
     pub total: AtomicU64,
     pub cancel: AtomicBool,
+    /// While set, the progress counts areas or files, not bytes.
+    pub items: AtomicBool,
+    /// While set, the step cannot be stopped, so Cancel is hidden.
+    pub locked: AtomicBool,
     stage: Mutex<String>,
 }
 
@@ -291,7 +295,7 @@ pub fn install(paths: &Paths, release: &Release, progress: &Progress) -> Result<
     unpacked
 }
 
-fn expected_hash(sums: &str, file: &str) -> Option<String> {
+pub(crate) fn expected_hash(sums: &str, file: &str) -> Option<String> {
     sums.lines().find_map(|line| {
         let mut words = line.split_whitespace();
         let hash = words.next()?;
@@ -300,7 +304,7 @@ fn expected_hash(sums: &str, file: &str) -> Option<String> {
     })
 }
 
-fn get_text(url: &str) -> Result<String, String> {
+pub(crate) fn get_text(url: &str) -> Result<String, String> {
     let mut response = github::agent(Some(std::time::Duration::from_secs(30)))
         .get(url)
         .call()
@@ -315,7 +319,12 @@ fn get_text(url: &str) -> Result<String, String> {
 }
 
 /// Downloads `url` to `to` and returns the file's SHA-256 in hex.
-fn download(url: &str, to: &Path, size: u64, progress: &Progress) -> Result<String, String> {
+pub(crate) fn download(
+    url: &str,
+    to: &Path,
+    size: u64,
+    progress: &Progress,
+) -> Result<String, String> {
     let mut response = github::agent(None)
         .get(url)
         .call()

@@ -14,6 +14,7 @@ pub mod install;
 pub mod kjk_report;
 pub mod kjk_settings;
 pub mod launch;
+pub mod lighting;
 pub mod notes;
 pub mod run;
 pub mod selfupdate;
