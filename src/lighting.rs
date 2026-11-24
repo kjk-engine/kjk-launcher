@@ -213,6 +213,14 @@ pub struct GameLine {
     pub archive: Option<String>,
     #[serde(default)]
     pub why: Option<String>,
+    /// What went wrong, for a line that failed or was refused: one of
+    /// kjk's closed set of kinds (`kind_words`). An older kjk gives none.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// kjk's store folder, for a failure to write into it. An older kjk
+    /// gives none.
+    #[serde(default)]
+    pub store: Option<String>,
 }
 
 /// An area that keeps the game's own lighting, and why.
@@ -243,6 +251,16 @@ pub struct Check {
     /// kjk's sentence for the player when the install is refused.
     #[serde(default)]
     pub why: Option<String>,
+    /// Why the install is refused: `files_differ` or `bake_format`. An
+    /// older kjk gives none.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// The format of the download's bakes. An older kjk gives none.
+    #[serde(default)]
+    pub bake_format: Option<u32>,
+    /// The format of the bakes this kjk reads. An older kjk gives none.
+    #[serde(default)]
+    pub reads_format: Option<u32>,
 }
 
 impl Check {
@@ -251,9 +269,13 @@ impl Check {
     }
 
     /// The download's format and the format kjk reads, when they differ.
-    /// kjk says so for each area that falls back: "the bake's format is 3,
-    /// and this game reads format 2".
+    /// kjk gives both. An older kjk says so only in the sentence of each
+    /// area that falls back: "the bake's format is 3, and this game reads
+    /// format 2".
     pub fn format_mismatch(&self) -> Option<(u32, u32)> {
+        if let (Some(bake), Some(reads)) = (self.bake_format, self.reads_format) {
+            return (bake != reads).then_some((bake, reads));
+        }
         self.fall_back.iter().find_map(|fall| {
             let rest = fall.why.split("the bake's format is ").nth(1)?;
             let (bake, rest) = rest.split_once(',')?;
@@ -364,7 +386,10 @@ fn from_answer(answer: &Answer) -> Status {
                 archive: line.archive.clone().unwrap_or_default(),
             },
             "broken" => State::Broken(line.why.clone().unwrap_or_default()),
-            _ => State::Failed(line.why.clone().unwrap_or_default()),
+            _ => State::Failed(match line.kind.as_deref() {
+                Some("no_store") => NO_STORE.to_string(),
+                _ => line.why.clone().unwrap_or_default(),
+            }),
         };
         match line.game.as_deref().and_then(Game::from_key) {
             Some(game) => games.push((game, state)),
@@ -457,6 +482,84 @@ fn write_failed(error: &std::io::Error, dir: &Path, bytes: u64) -> String {
             log_hint()
         )
     }
+}
+
+/// kjk's sentence and kind for a line that failed, for the log.
+fn detail(line: &GameLine) -> String {
+    let why = line.why.clone().unwrap_or_else(|| line.status.clone());
+    match &line.kind {
+        Some(kind) => format!("{why} (kind {kind})"),
+        None => why,
+    }
+}
+
+/// The sentence for a kjk that found no folder for its files.
+const NO_STORE: &str = "kjk could not find the folder where it keeps its files.";
+
+/// What the launcher asked kjk to do, for the player's sentence when it
+/// failed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Asked {
+    Check,
+    Install,
+    Remove,
+}
+
+/// The player's sentence for `line`, a game's line of kjk that failed or
+/// was refused while kjk did `asked` for `game`, from the `kind` kjk gives.
+/// `bytes` is about the size the download takes on the disk. `None` when
+/// kjk gives no kind, as an older kjk does, or one the launcher does not
+/// know: the caller then says what it said before kjk gave kinds.
+fn kind_words(line: &GameLine, asked: Asked, game: Game, bytes: u64) -> Option<String> {
+    let folder = match &line.store {
+        Some(store) => format!("the folder {store}"),
+        None => "the folder where kjk keeps its files".to_string(),
+    };
+    let words = match line.kind.as_deref()? {
+        "no_store" => format!("{NO_STORE} {}", log_hint()),
+        "store_not_writable" if asked == Asked::Remove => format!(
+            "kjk is not allowed to change {folder}. Check that the folder is not read-only, then try again."
+        ),
+        "store_not_writable" => format!(
+            "kjk is not allowed to write into {folder}. Check that the folder is not read-only, then try again."
+        ),
+        "disk_full" => format!(
+            "There is not enough free space on the disk of {folder}. The new lighting needs about {}. Free some space, then try again.",
+            crate::size::size(bytes)
+        ),
+        "in_use" => "Another program is using the files of the new lighting. Close kjk if it is running, then try again.".to_string(),
+        "game_not_found" => format!(
+            "kjk did not find {}. Choose the game's folder on the Play page, then try again.",
+            game.name()
+        ),
+        "game_unreadable" => format!(
+            "kjk could not read the files of {}. Check the game's folder on the Play page, then try again.",
+            game.name()
+        ),
+        "list_unreadable" => {
+            "kjk could not read the list of areas of this download. Try the download again."
+                .to_string()
+        }
+        "list_invalid" => "This version of kjk cannot read the list of areas of this download. Update kjk, then try again.".to_string(),
+        "wrong_game" => format!(
+            "This download is not the new lighting for {}.",
+            game.name()
+        ),
+        "zip_unreadable" => {
+            "kjk could not open the downloaded file. Try the download again.".to_string()
+        }
+        "zip_mismatch" | "zip_damaged" => DAMAGED.to_string(),
+        "files_differ" | "bake_format" => game_names(line.why.as_deref()?),
+        _ => return None,
+    };
+    Some(words)
+}
+
+/// kjk's sentence with the games named as the launcher names them. An
+/// older kjk says "KOTOR 1" and "KOTOR 2".
+pub fn game_names(text: &str) -> String {
+    text.replace("KOTOR 1", Game::K1.name())
+        .replace("KOTOR 2", Game::Tsl.name())
 }
 
 /// What a manifest says about its download.
@@ -621,11 +724,13 @@ pub fn remove(kjk: &Path, game: Game) -> Result<bool, String> {
         Some(line) if line.status == "removed" => Ok(true),
         Some(line) if line.status == "missing" => Ok(false),
         Some(line) => Err(failed(
-            format!(
-                "kjk could not remove the new lighting. Close kjk if it is running, then try again. {}",
-                log_hint()
-            ),
-            line.why.clone().unwrap_or_else(|| line.status.clone()),
+            kind_words(line, Asked::Remove, game, 0).unwrap_or_else(|| {
+                format!(
+                    "kjk could not remove the new lighting. Close kjk if it is running, then try again. {}",
+                    log_hint()
+                )
+            }),
+            detail(line),
         )),
         None => Err(failed(
             format!("kjk did not answer. {}", log_hint()),
@@ -638,7 +743,7 @@ pub fn remove(kjk: &Path, game: Game) -> Result<bool, String> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Outcome {
     /// Installed, with this many areas, and what the check found.
-    Installed { areas: usize, check: Check },
+    Installed { areas: usize, check: Box<Check> },
     /// kjk turned the download away, with its sentence for the player.
     /// Nothing but the manifest was downloaded.
     Refused { why: String },
@@ -905,7 +1010,7 @@ fn download_into(
         }
     };
     if !check.allowed() {
-        let why = check.why.clone().unwrap_or_else(|| {
+        let why = check.why.as_deref().map(game_names).unwrap_or_else(|| {
             format!(
                 "The new lighting needs {}. Only {} of the {} areas match.",
                 check.needs, check.matching, check.areas
@@ -962,17 +1067,22 @@ fn download_into(
     match line.status.as_str() {
         "installed" => Ok(Outcome::Installed {
             areas: line.areas.unwrap_or(check.areas),
-            check: answer.check.unwrap_or(check),
+            check: Box::new(answer.check.unwrap_or(check)),
         }),
         "refused" => Ok(Outcome::Refused {
-            why: line.why.clone().unwrap_or_default(),
+            why: game_names(line.why.as_deref().unwrap_or_default()),
         }),
         _ => Err(failed(
-            format!(
-                "kjk could not install it, and the lighting you had before is unchanged. {}",
-                log_hint()
-            ),
-            line.why.clone().unwrap_or_else(|| line.status.clone()),
+            match kind_words(line, Asked::Install, offer.game, bytes) {
+                // Without a store there was no lighting before.
+                Some(words) if line.kind.as_deref() == Some("no_store") => words,
+                Some(words) => format!("{words} The lighting you had before is unchanged."),
+                None => format!(
+                    "kjk could not install it, and the lighting you had before is unchanged. {}",
+                    log_hint()
+                ),
+            },
+            detail(line),
         )),
     }
 }
@@ -1026,13 +1136,11 @@ fn run_check(
             )
         })?;
     let Some(check) = answer.check else {
+        let line = answer.games.first();
         return Err(failed(
-            format!("kjk could not check your game files. {}", log_hint()),
-            answer
-                .games
-                .first()
-                .and_then(|line| line.why.clone())
-                .unwrap_or_else(|| "kjk printed no check".into()),
+            line.and_then(|line| kind_words(line, Asked::Check, game, 0))
+                .unwrap_or_else(|| format!("kjk could not check your game files. {}", log_hint())),
+            line.map_or_else(|| "kjk printed no check".into(), detail),
         ));
     };
     let fall_back: Vec<String> = check
@@ -1041,13 +1149,23 @@ fn run_check(
         .map(|f| format!("{}: {}", f.area, f.why))
         .collect();
     crate::log::line(format!(
-        "lighting: the check says {}: {} of {} areas match, objects differ in {}, {} keep the game's lighting, needs {}{}{}",
+        "lighting: the check says {}{}: {} of {} areas match, objects differ in {}, {} keep the game's lighting, needs {}, bake format {}, kjk reads format {}{}{}",
         check.status,
+        check
+            .kind
+            .as_ref()
+            .map_or(String::new(), |kind| format!(" ({kind})")),
         check.matching,
         check.areas,
         check.placeables_differ.len(),
         check.fall_back.len(),
         check.needs,
+        check
+            .bake_format
+            .map_or("not given".to_string(), |f| f.to_string()),
+        check
+            .reads_format
+            .map_or("not given".to_string(), |f| f.to_string()),
         if check.cached { ", from an earlier check" } else { "" },
         if fall_back.is_empty() {
             String::new()
@@ -1203,6 +1321,123 @@ mod tests {
     }
 
     #[test]
+    fn reads_the_formats_kjk_gives() {
+        // A newer kjk gives both formats, and the sentences are not read.
+        let line = r#"{"check":{"game":"tsl","status":"refused","needs":"TSLRCM","areas":2,"matching":0,"fall_back":[{"area":"101per","why":"other words"}],"kind":"bake_format","bake_format":3,"reads_format":2}}"#;
+        let Some(Line::Answer(answer)) = parse_line(line) else {
+            panic!("no answer");
+        };
+        let check = answer.check.unwrap();
+        assert_eq!(check.format_mismatch(), Some((3, 2)));
+        assert_eq!(check.kind.as_deref(), Some("bake_format"));
+        // The same format is no mismatch, whatever a sentence says.
+        let same = Check {
+            bake_format: Some(2),
+            reads_format: Some(2),
+            fall_back: vec![FallBack {
+                area: "101per".into(),
+                why: "the bake's format is 3, and this game reads format 2".into(),
+            }],
+            ..check
+        };
+        assert_eq!(same.format_mismatch(), None);
+    }
+
+    fn failed_line(kind: Option<&str>, store: Option<&str>) -> GameLine {
+        GameLine {
+            game: Some("tsl".into()),
+            status: "failed".into(),
+            areas: None,
+            archive: None,
+            why: Some("C:\\s\\lighting\\tsl.partial: Access is denied. (os error 5)".into()),
+            kind: kind.map(str::to_string),
+            store: store.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn says_what_to_do_for_each_kind() {
+        let words = |kind: &str, asked: Asked| {
+            kind_words(
+                &failed_line(Some(kind), Some("C:\\s")),
+                asked,
+                Game::Tsl,
+                214_000_000,
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            words("store_not_writable", Asked::Install),
+            "kjk is not allowed to write into the folder C:\\s. Check that the folder is not read-only, then try again."
+        );
+        assert!(
+            words("store_not_writable", Asked::Remove).starts_with("kjk is not allowed to change")
+        );
+        assert!(words("disk_full", Asked::Install).contains("not enough free space"));
+        assert!(words("in_use", Asked::Remove).contains("Close kjk"));
+        assert!(words("game_not_found", Asked::Check).contains("kjk did not find KOTOR II."));
+        assert!(words("list_invalid", Asked::Check).contains("Update kjk"));
+        assert_eq!(words("zip_mismatch", Asked::Install), DAMAGED);
+        assert_eq!(words("zip_damaged", Asked::Install), DAMAGED);
+        assert!(words("wrong_game", Asked::Check).contains("for KOTOR II"));
+        for kind in [
+            "no_store",
+            "store_not_writable",
+            "disk_full",
+            "in_use",
+            "game_not_found",
+            "game_unreadable",
+            "list_unreadable",
+            "list_invalid",
+            "wrong_game",
+            "zip_unreadable",
+            "zip_mismatch",
+            "zip_damaged",
+        ] {
+            let said = words(kind, Asked::Install);
+            assert!(!said.contains("os error"), "{kind}: {said}");
+        }
+        // Without the store's folder, the folder is named in words.
+        let line = failed_line(Some("store_not_writable"), None);
+        let said = kind_words(&line, Asked::Install, Game::K1, 0).unwrap();
+        assert!(
+            said.contains("the folder where kjk keeps its files"),
+            "{said}"
+        );
+        // An older kjk gives no kind, and a kind the launcher does not know
+        // is said as before.
+        assert_eq!(
+            kind_words(&failed_line(None, None), Asked::Install, Game::K1, 0),
+            None
+        );
+        assert_eq!(
+            kind_words(
+                &failed_line(Some("new_kind"), None),
+                Asked::Install,
+                Game::K1,
+                0
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn names_the_games_as_the_launcher_does() {
+        let old =
+            "The new lighting needs KOTOR 2 with TSLRCM installed. Only 2 of the 6 areas match.";
+        assert_eq!(
+            game_names(old),
+            "The new lighting needs KOTOR II with TSLRCM installed. Only 2 of the 6 areas match."
+        );
+        assert_eq!(
+            game_names("The new lighting needs KOTOR 1 with the K1 Community Patch installed."),
+            "The new lighting needs KOTOR with the K1 Community Patch installed."
+        );
+        let new = "The new lighting needs KOTOR II with TSLRCM installed.";
+        assert_eq!(game_names(new), new);
+    }
+
+    #[test]
     fn reads_the_status() {
         let text = r#"{"games":[{"game":"k1","status":"installed","path":"C:\\s\\lighting\\k1","archive":"kjk-lighting-k1-1.zip","areas":171,"needs":"the K1 Community Patch"},{"game":"tsl","status":"missing"}]}"#;
         let status = parse_status(text);
@@ -1226,6 +1461,12 @@ mod tests {
         let failed = r#"{"games":[{"game":null,"status":"failed","why":"kjk found no folder for its store."}]}"#;
         let failed = parse_status(failed);
         assert!(matches!(failed.state(Game::Tsl), Some(State::Failed(_))));
+        // A newer kjk gives the kind, and the player reads no setting's name.
+        let no_store = r#"{"games":[{"game":null,"status":"failed","why":"kjk found no folder for its store. Set KJK_STORE.","kind":"no_store"}]}"#;
+        assert_eq!(
+            parse_status(no_store).state(Game::K1),
+            Some(&State::Failed(NO_STORE.into()))
+        );
 
         let usage = "error: unrecognized subcommand 'lighting'\n\nUsage: kjk.exe <COMMAND>\n";
         assert_eq!(parse_status(usage), Status::TooOld);
