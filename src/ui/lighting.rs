@@ -81,7 +81,7 @@ impl Ready {
         ui.add_space(theme::SPACE_2);
         // Only the games kjk finds get a row.
         let found: Vec<Game> = match &self.games {
-            Games::Known(_, Some(report), _) => light::GAMES
+            Games::Known(_, Some(report)) => light::GAMES
                 .into_iter()
                 .filter(|game| matches!(report.status(*game), Some(GameStatus::Found { .. })))
                 .collect(),
