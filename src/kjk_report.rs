@@ -1,5 +1,7 @@
-//! What the selected kjk version finds: its game folders and ffmpeg, as
+//! What the selected kjk version finds: its game folders, as
 //! `kjk installs --json` reports them (a command of kjk 0.19.2 and later).
+//! The report also says whether ffmpeg is installed. The launcher ignores
+//! that, because kjk plays the games' movies without ffmpeg.
 
 use crate::run;
 use crate::widgets::Status;
@@ -68,9 +70,6 @@ impl Game {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Report {
     pub games: Vec<(Game, GameStatus)>,
-    /// Whether kjk finds ffmpeg and ffprobe. `None` when the report has no
-    /// `ffmpeg` field.
-    pub ffmpeg: Option<bool>,
 }
 
 impl Report {
@@ -90,11 +89,7 @@ pub fn parse(stdout: &str) -> Option<Report> {
         let status = GameStatus::deserialize(entry).ok()?;
         games.push((game, status));
     }
-    let ffmpeg = match value.get("ffmpeg") {
-        None => None,
-        Some(ffmpeg) => Some(ffmpeg.get("status")?.as_str()? == "found"),
-    };
-    Some(Report { games, ffmpeg })
+    Some(Report { games })
 }
 
 /// Runs `<kjk> installs --json`. None when the program is older than the
@@ -137,10 +132,9 @@ pub fn blocked_by(report: Option<&Report>) -> Option<Game> {
         .find(|game| !matches!(report.status(*game), Some(GameStatus::Found { .. })))
 }
 
-/// Whether every game is found and ffmpeg is installed, so the "Before you
-/// play" section can be one line.
-pub fn all_ready(report: &Report, ffmpeg: bool) -> bool {
-    ffmpeg && blocked_by(Some(report)).is_none()
+/// Whether every game is found, so the "Setup" section can be one line.
+pub fn all_ready(report: &Report) -> bool {
+    blocked_by(Some(report)).is_none()
 }
 
 #[cfg(test)]
@@ -152,7 +146,7 @@ mod tests {
   {"game": "tsl", "status": "refused", "path": "D:\\wrong", "source": "settings", "why": "no swkotor2.exe"},
   {"game": "ja",  "status": "missing"}
  ],
- "ffmpeg": {"status": "found"}}"#;
+ "ffmpeg": {"status": "missing"}}"#;
 
     fn found(game: Game) -> (Game, GameStatus) {
         let status = GameStatus::Found {
@@ -163,10 +157,7 @@ mod tests {
     }
 
     fn report(games: Vec<(Game, GameStatus)>) -> Report {
-        Report {
-            games,
-            ffmpeg: Some(true),
-        }
+        Report { games }
     }
 
     #[test]
@@ -184,7 +175,6 @@ mod tests {
             )
         ));
         assert!(matches!(r.games[2], (Game::Ja, GameStatus::Missing)));
-        assert_eq!(r.ffmpeg, Some(true));
     }
 
     #[test]
@@ -241,15 +231,14 @@ mod tests {
     }
 
     #[test]
-    fn ready_needs_every_game_and_ffmpeg() {
+    fn ready_needs_every_game() {
         let all = report(Game::ALL.map(found).to_vec());
         let missing = report(vec![
             found(Game::K1),
             (Game::Tsl, GameStatus::Missing),
             found(Game::Ja),
         ]);
-        assert!(all_ready(&all, true));
-        assert!(!all_ready(&all, false));
-        assert!(!all_ready(&missing, true));
+        assert!(all_ready(&all));
+        assert!(!all_ready(&missing));
     }
 }
