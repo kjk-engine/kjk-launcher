@@ -67,7 +67,10 @@ impl Ready {
             }
         };
         if status == light::Status::TooOld {
-            widgets::muted(ui, "The new lighting needs a newer version of kjk.");
+            widgets::muted(
+                ui,
+                "The new lighting needs a newer version of kjk. Install one on the Versions page.",
+            );
             ui.add_space(theme::SPACE_6);
             return;
         }
@@ -114,6 +117,16 @@ impl Ready {
         state: &State,
     ) {
         let offers = light::available(&self.releases, game);
+        // Without an offer, whether GitHub was asked at all.
+        let missing_words = if light::source().is_some() {
+            "The new lighting is not available yet."
+        } else if self.problem.is_some() {
+            "The launcher could not reach GitHub, so it cannot tell whether the new lighting is available. Check your internet connection, then press Check for updates now."
+        } else if self.checked_at.is_none() {
+            "The launcher has not asked GitHub for the new lighting yet. Press Check for updates now."
+        } else {
+            "The new lighting is not available yet."
+        };
         let offer = offers.first().cloned();
         let newer = offer.as_ref().is_some_and(|o| light::newer(state, o));
         let idle = self.job.is_none();
@@ -153,7 +166,7 @@ impl Ready {
                             .clicked();
                     }
                     None if matches!(state, State::Missing) => {
-                        widgets::muted(ui, "The new lighting is not available yet.");
+                        widgets::muted(ui, missing_words);
                     }
                     _ => {}
                 }
@@ -254,16 +267,19 @@ impl Ready {
         match outcome {
             Outcome::Lighting { game, result } => {
                 self.notice = match &result {
-                    Ok(light::Outcome::Installed { .. }) => Some(Notice::Info(format!(
-                        "The new lighting for {} is installed.",
-                        game.name()
+                    Ok(light::Outcome::Installed { areas, check }) => Some(Notice::Info(format!(
+                        "The new lighting for {} is installed, with {}. {}",
+                        game.name(),
+                        areas_word(*areas),
+                        light::matching_words(check)
                     ))),
                     Ok(_) => None,
-                    Err(e) if e == "cancelled" => Some(Notice::Info(
+                    Err(e) if e == light::CANCELLED => Some(Notice::Info(
                         "The download was cancelled. Nothing was installed.".into(),
                     )),
                     Err(e) => Some(Notice::Error(format!(
-                        "Downloading the new lighting failed. Nothing was installed. {e}"
+                        "The new lighting for {} was not installed. {e}",
+                        game.name()
                     ))),
                 };
                 if let Ok(done) = result {
@@ -272,9 +288,13 @@ impl Ready {
             }
             Outcome::LightingRemoved { game, result } => {
                 self.notice = Some(match result {
-                    Ok(()) => {
+                    Ok(true) => {
                         Notice::Info(format!("The new lighting for {} is removed.", game.name()))
                     }
+                    Ok(false) => Notice::Info(format!(
+                        "The new lighting for {} was not installed, so there was nothing to remove.",
+                        game.name()
+                    )),
                     Err(e) => Notice::Error(format!(
                         "The new lighting for {} could not be removed. {e}",
                         game.name()

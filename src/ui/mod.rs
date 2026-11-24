@@ -108,7 +108,7 @@ enum Outcome {
     /// The new lighting of a game was removed, or why it was not.
     LightingRemoved {
         game: Game,
-        result: Result<(), String>,
+        result: Result<bool, String>,
     },
 }
 
@@ -1104,7 +1104,8 @@ impl Ready {
                 } else if items {
                     format!("{stage}. {done} of {total}.")
                 } else {
-                    format!("{stage}. {} of {}.", size(done), size(total))
+                    let percent = (done * 100 / total).min(100);
+                    format!("{stage}. {} of {} ({percent}%).", size(done), size(total))
                 };
                 widgets::muted(ui, amount);
             },

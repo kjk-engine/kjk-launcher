@@ -145,7 +145,14 @@ pub fn offers(list: &[Release], game: Game) -> Vec<Offer> {
 /// The download for `game` in the folder `dir`: the same files as on a
 /// release, with the newest label when there are several.
 pub fn local_offers(dir: &Path, game: Game) -> Vec<Offer> {
-    let assets: Vec<Asset> = fs::read_dir(dir)
+    let listed = fs::read_dir(dir);
+    if let Err(e) = &listed {
+        crate::log::line(format!(
+            "lighting: {SOURCE_VAR} names {}, which cannot be read: {e}",
+            dir.display()
+        ));
+    }
+    let assets: Vec<Asset> = listed
         .into_iter()
         .flatten()
         .flatten()
@@ -373,27 +380,158 @@ pub fn newer(state: &State, offer: &Offer) -> bool {
     matches!(state, State::Installed { archive, .. } if *archive != offer.zip.name)
 }
 
+/// What a cancelled download returns as its error.
+pub const CANCELLED: &str = "cancelled";
+
+/// The sentence that sends the player to the log for the details.
+pub fn log_hint() -> String {
+    match crate::log::path() {
+        Some(path) => format!("The launcher's log has the details: {}", path.display()),
+        None => "The launcher's log has the details.".to_string(),
+    }
+}
+
+/// Writes `detail` to the log and returns `player`, the sentence the
+/// player reads.
+fn failed(player: impl Into<String>, detail: impl AsRef<str>) -> String {
+    let player = player.into();
+    crate::log::line(format!(
+        "lighting: failed: {}\nthe player reads: {player}",
+        detail.as_ref()
+    ));
+    player
+}
+
+/// The sentence for a download that could not be read from the source.
+fn unreachable(offer: &Offer) -> String {
+    if offer.local {
+        format!(
+            "The launcher could not read the new lighting from the folder that {SOURCE_VAR} names."
+        )
+    } else {
+        "The launcher could not reach GitHub to download the new lighting. Check your internet connection, then try again.".into()
+    }
+}
+
+/// The player's sentence for a download that failed with `failure`, into
+/// the folder `dir`, from `offer`.
+fn download_failed(failure: install::Failure, offer: &Offer, dir: &Path) -> String {
+    use install::Failure;
+    let player = match &failure {
+        Failure::Cancelled => {
+            crate::log::line("lighting: the download was cancelled");
+            return CANCELLED.into();
+        }
+        Failure::Unreachable(_) => unreachable(offer),
+        Failure::Interrupted(_) => "The download stopped before it was complete. Check your internet connection, then try again.".into(),
+        Failure::Write(_, error) => write_failed(error, dir, offer.zip.size),
+    };
+    failed(player, failure.to_string())
+}
+
+/// The player's sentence for a file that could not be written into `dir`,
+/// for a download of about `bytes`.
+fn write_failed(error: &std::io::Error, dir: &Path, bytes: u64) -> String {
+    // ERROR_HANDLE_DISK_FULL and ERROR_DISK_FULL on Windows, ENOSPC elsewhere.
+    let code = error.raw_os_error();
+    let full = if cfg!(windows) {
+        matches!(code, Some(39 | 112))
+    } else {
+        code == Some(28)
+    };
+    if full || error.kind() == std::io::ErrorKind::StorageFull {
+        format!(
+            "There is not enough free space to download the new lighting into {}. It needs about {}. Free some space, then try again.",
+            dir.display(),
+            crate::size::size(bytes)
+        )
+    } else if error.kind() == std::io::ErrorKind::PermissionDenied {
+        format!(
+            "The launcher is not allowed to write into {}, so the new lighting was not downloaded. Check that the folder is not read-only, then try again.",
+            dir.display()
+        )
+    } else {
+        format!(
+            "The launcher could not write the new lighting into {}. {}",
+            dir.display(),
+            log_hint()
+        )
+    }
+}
+
+/// What a manifest says about its download.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Facts {
+    pub game: Option<String>,
+    pub format: Option<u32>,
+    pub needs: Option<String>,
+    /// The zip's file name and size in bytes.
+    pub archive: Option<(String, u64)>,
+    pub areas: usize,
+}
+
+/// The facts in the text of a manifest.
+pub fn facts(text: &str) -> Facts {
+    let mut facts = Facts {
+        format: manifest_format(text),
+        ..Facts::default()
+    };
+    for line in text.lines() {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        match words.as_slice() {
+            ["game", game] => facts.game = Some((*game).to_string()),
+            ["needs", ..] => facts.needs = Some(words[1..].join(" ")),
+            ["archive", file, "blake3", _, "bytes", bytes] => {
+                facts.archive = bytes.parse().ok().map(|b| ((*file).to_string(), b));
+            }
+            ["area", ..] => facts.areas += 1,
+            _ => {}
+        }
+    }
+    facts
+}
+
 /// Runs kjk with `args`, hands each progress line to `step`, and returns
-/// its last answer. With `cancellable`, a cancel stops kjk. `Ok(None)` when
-/// kjk printed no answer: it is older than the command.
+/// its last answer. With `progress`, a cancel stops kjk unless the step is
+/// locked. `Ok(None)` when kjk printed no answer: it is older than the
+/// command. The command, kjk's whole output and its exit code go to the
+/// log; the progress lines are counted, with the last one.
 fn run_kjk(
     kjk: &Path,
     args: &[&std::ffi::OsStr],
     progress: Option<&Progress>,
     step: &mut dyn FnMut(&Step),
 ) -> Result<Option<Answer>, String> {
+    let shown: Vec<String> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let command_line = format!("{} {}", kjk.display(), shown.join(" "));
+    crate::log::line(format!("lighting: runs {command_line}"));
+    let started = std::time::Instant::now();
     let mut command = Command::new(kjk);
     command
         .args(args)
         .envs(crate::config::kjk_env())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
     crate::run::no_window(&mut command);
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("kjk could not start ({e})"))?;
+    let mut child = command.spawn().map_err(|e| {
+        failed(
+            "kjk could not be started. Install this version of kjk again on the Versions page, then try again.",
+            format!("{command_line}: {e}"),
+        )
+    })?;
     let stdout = child.stdout.take().ok_or("kjk could not start")?;
+    let stderr = child.stderr.take();
+    let errors = std::thread::spawn(move || {
+        let mut text = String::new();
+        if let Some(mut stderr) = stderr {
+            let _ = stderr.read_to_string(&mut text);
+        }
+        text
+    });
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines() {
@@ -404,27 +542,59 @@ fn run_kjk(
         }
     });
     let mut answer = None;
+    let mut output = Vec::new();
+    let (mut steps, mut last_step) = (0usize, String::new());
+    let mut stopped = false;
     loop {
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(text) => match parse_line(&text) {
-                Some(Line::Progress(found)) => step(&found),
-                Some(Line::Answer(found)) => answer = Some(found),
-                None => {}
+                Some(Line::Progress(found)) => {
+                    steps += 1;
+                    last_step = text;
+                    step(&found);
+                }
+                Some(Line::Answer(found)) => {
+                    output.push(text);
+                    answer = Some(found);
+                }
+                None => output.push(text),
             },
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                let stop = progress.is_some_and(|p| {
+                stopped = progress.is_some_and(|p| {
                     p.cancel.load(Ordering::Relaxed) && !p.locked.load(Ordering::Relaxed)
                 });
-                if stop {
+                if stopped {
                     let _ = child.kill();
-                    let _ = child.wait();
-                    return Err("cancelled".into());
+                    break;
                 }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
-    let _ = child.wait();
+    let status = child.wait();
+    let errors = errors.join().unwrap_or_default();
+    let ended = match (&status, stopped) {
+        (_, true) => "was stopped by a cancel".to_string(),
+        (Ok(status), _) => format!("ended with {status}"),
+        (Err(e), _) => format!("could not be waited for ({e})"),
+    };
+    let mut entry = format!(
+        "lighting: kjk {ended} after {:.1} s, with {steps} progress lines",
+        started.elapsed().as_secs_f64()
+    );
+    if !last_step.is_empty() {
+        entry.push_str(&format!("\nlast progress: {last_step}"));
+    }
+    for line in &output {
+        entry.push_str(&format!("\nout: {line}"));
+    }
+    for line in errors.lines() {
+        entry.push_str(&format!("\nerr: {line}"));
+    }
+    crate::log::line(entry);
+    if stopped {
+        return Err(CANCELLED.into());
+    }
     Ok(answer)
 }
 
@@ -437,15 +607,30 @@ pub fn status(kjk: &Path) -> Status {
     }
 }
 
-/// `kjk lighting remove <game> --json`.
-pub fn remove(kjk: &Path, game: Game) -> Result<(), String> {
+/// `kjk lighting remove <game> --json`. `Ok(true)` when it removed the
+/// lighting, `Ok(false)` when none was installed.
+pub fn remove(kjk: &Path, game: Game) -> Result<bool, String> {
     let args = ["lighting", "remove", game.key(), "--json"].map(std::ffi::OsStr::new);
-    let answer = run_kjk(kjk, &args, None, &mut |_| {})?
-        .ok_or("This version of kjk cannot remove the new lighting.")?;
+    let answer = run_kjk(kjk, &args, None, &mut |_| {})?.ok_or_else(|| {
+        failed(
+            "This version of kjk cannot remove the new lighting. Update kjk, then try again.",
+            "kjk printed no answer to lighting remove",
+        )
+    })?;
     match answer.games.first() {
-        Some(line) if line.status == "removed" || line.status == "missing" => Ok(()),
-        Some(line) => Err(line.why.clone().unwrap_or_else(|| line.status.clone())),
-        None => Err("kjk did not answer.".into()),
+        Some(line) if line.status == "removed" => Ok(true),
+        Some(line) if line.status == "missing" => Ok(false),
+        Some(line) => Err(failed(
+            format!(
+                "kjk could not remove the new lighting. Close kjk if it is running, then try again. {}",
+                log_hint()
+            ),
+            line.why.clone().unwrap_or_else(|| line.status.clone()),
+        )),
+        None => Err(failed(
+            format!("kjk did not answer. {}", log_hint()),
+            "kjk printed no game line to lighting remove",
+        )),
     }
 }
 
@@ -463,47 +648,65 @@ pub enum Outcome {
     NeedsNewerDownload,
 }
 
+/// "All 75 areas match your game files." or "73 of the 75 areas match
+/// your game files."
+pub fn matching_words(check: &Check) -> String {
+    if check.matching == check.areas {
+        format!("All {} areas match your game files.", check.areas)
+    } else {
+        format!(
+            "{} of the {} areas match your game files.",
+            check.matching, check.areas
+        )
+    }
+}
+
 /// The text of `SHA256SUMS` beside `offer`.
 fn sums_text(offer: &Offer) -> Result<String, String> {
     let sums = offer
         .sums
         .as_ref()
-        .ok_or("this download has no SHA256SUMS, so it cannot be checked")?;
-    if offer.local {
+        .ok_or_else(|| failed(UNCHECKED, format!("{} has no SHA256SUMS", offer.tag)))?;
+    crate::log::line(format!("lighting: reads {}", sums.browser_download_url));
+    let text = if offer.local {
         fs::read_to_string(&sums.browser_download_url)
             .map_err(|e| format!("{}: {e}", sums.browser_download_url))
     } else {
         install::get_text(&sums.browser_download_url)
-    }
+    };
+    text.map_err(|e| failed(unreachable(offer), e))
 }
 
 /// Copies the file at `from` to `to` and returns its SHA-256 in hex, as
 /// `install::download` does for a URL.
-fn copy_hashing(from: &Path, to: &Path, progress: &Progress) -> Result<String, String> {
-    let mut reader = File::open(from).map_err(|e| format!("{}: {e}", from.display()))?;
+fn copy_hashing(from: &Path, to: &Path, progress: &Progress) -> Result<String, install::Failure> {
+    use install::Failure;
+    let mut reader =
+        File::open(from).map_err(|e| Failure::Unreachable(format!("{}: {e}", from.display())))?;
     let total = reader.metadata().map_or(0, |m| m.len());
     progress.total.store(total, Ordering::Relaxed);
     progress.done.store(0, Ordering::Relaxed);
-    let file = File::create(to).map_err(|e| format!("{}: {e}", to.display()))?;
+    let file = File::create(to).map_err(|e| Failure::Write(to.to_path_buf(), e))?;
     let mut file = BufWriter::new(file);
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 256 * 1024];
     loop {
         if progress.cancel.load(Ordering::Relaxed) {
-            return Err("cancelled".into());
+            return Err(Failure::Cancelled);
         }
         let n = reader
             .read(&mut buffer)
-            .map_err(|e| format!("{}: {e}", from.display()))?;
+            .map_err(|e| Failure::Interrupted(format!("{}: {e}", from.display())))?;
         if n == 0 {
             break;
         }
         hasher.update(&buffer[..n]);
         file.write_all(&buffer[..n])
-            .map_err(|e| format!("{}: {e}", to.display()))?;
+            .map_err(|e| Failure::Write(to.to_path_buf(), e))?;
         progress.done.fetch_add(n as u64, Ordering::Relaxed);
     }
-    file.flush().map_err(|e| format!("{}: {e}", to.display()))?;
+    file.flush()
+        .map_err(|e| Failure::Write(to.to_path_buf(), e))?;
     Ok(hasher
         .finalize()
         .iter()
@@ -511,8 +714,17 @@ fn copy_hashing(from: &Path, to: &Path, progress: &Progress) -> Result<String, S
         .collect())
 }
 
+/// The sentence for a downloaded file that is not the one the release
+/// lists.
+const DAMAGED: &str = "The downloaded file is damaged. Try the download again.";
+
+/// The sentence for a download without checksums.
+const UNCHECKED: &str =
+    "This download of the new lighting has no checksums, so the launcher cannot check it.";
+
 /// Fetches `asset` of `offer` into `dir` and checks it against `sums`. The
-/// file is deleted when it fails or does not match.
+/// file is deleted when it fails or does not match. An error is the
+/// player's sentence, or `CANCELLED`; the details go to the log.
 pub fn fetch(
     offer: &Offer,
     asset: &Asset,
@@ -520,22 +732,49 @@ pub fn fetch(
     dir: &Path,
     progress: &Progress,
 ) -> Result<PathBuf, String> {
-    let expected = install::expected_hash(sums, &asset.name)
-        .ok_or_else(|| format!("SHA256SUMS does not list {}", asset.name))?;
+    let expected = install::expected_hash(sums, &asset.name).ok_or_else(|| {
+        failed(
+            UNCHECKED,
+            format!("SHA256SUMS does not list {}", asset.name),
+        )
+    })?;
     let to = dir.join(&asset.name);
+    let started = std::time::Instant::now();
+    crate::log::line(format!(
+        "lighting: fetches {} ({} bytes listed) into {}",
+        asset.browser_download_url,
+        asset.size,
+        to.display()
+    ));
     let actual = if offer.local {
         copy_hashing(Path::new(&asset.browser_download_url), &to, progress)
     } else {
         install::download(&asset.browser_download_url, &to, asset.size, progress)
     };
-    let actual = actual.inspect_err(|_| {
-        let _ = fs::remove_file(&to);
-    })?;
+    let actual = match actual {
+        Ok(actual) => actual,
+        Err(failure) => {
+            let _ = fs::remove_file(&to);
+            crate::log::line(format!(
+                "lighting: {} stopped after {} bytes and {:.1} s; the part was deleted",
+                asset.name,
+                progress.done.load(Ordering::Relaxed),
+                started.elapsed().as_secs_f64()
+            ));
+            return Err(download_failed(failure, offer, dir));
+        }
+    };
+    let bytes = fs::metadata(&to).map_or(0, |m| m.len());
+    crate::log::line(format!(
+        "lighting: {} has {bytes} bytes, fetched in {:.1} s; SHA-256 expected {expected}, found {actual}",
+        asset.name,
+        started.elapsed().as_secs_f64()
+    ));
     if actual != expected {
         let _ = fs::remove_file(&to);
-        return Err(format!(
-            "{} does not match SHA256SUMS (expected {expected}, got {actual})",
-            asset.name
+        return Err(failed(
+            DAMAGED,
+            format!("{} does not match SHA256SUMS", asset.name),
         ));
     }
     Ok(to)
@@ -546,25 +785,81 @@ pub fn download_dir(downloads: &Path, game: Game) -> PathBuf {
     downloads.join(format!("lighting-{}", game.key()))
 }
 
+/// Deletes the folders of downloads that never ended, as when the launcher
+/// was closed during one. A folder whose files kjk still reads cannot be
+/// deleted and stays until the next download.
+pub fn clean_downloads(downloads: &Path) {
+    for game in GAMES {
+        let dir = download_dir(downloads, game);
+        if dir.exists() {
+            let removed = fs::remove_dir_all(&dir);
+            crate::log::line(format!(
+                "lighting: an earlier download was left in {}; removing it: {removed:?}",
+                dir.display()
+            ));
+        }
+    }
+}
+
 /// Downloads the new lighting for one game from the first of `offers`
 /// (newest first) and has `kjk` install it. The manifest comes first, and
 /// kjk checks it against the player's files. The zip is downloaded only
 /// when kjk allows the install. Whatever happens, the downloaded files are
-/// deleted at the end.
+/// deleted at the end. An error is the player's sentence, or `CANCELLED`;
+/// the details are in the log.
 pub fn download(
     kjk: &Path,
     offers: &[Offer],
     downloads: &Path,
     progress: &Progress,
 ) -> Result<Outcome, String> {
-    let first = offers.first().ok_or("The new lighting is not available.")?;
+    progress.stage("Reading the list of areas");
+    let first = offers.first().ok_or_else(|| {
+        failed(
+            "The new lighting is not available yet.",
+            match source() {
+                Some(dir) => format!("no download for this game in {}", dir.display()),
+                None => "no lighting release offers this game".to_string(),
+            },
+        )
+    })?;
+    let started = std::time::Instant::now();
+    crate::log::line(format!(
+        "lighting: download for {} starts: {} from {}, with {}",
+        first.game.key(),
+        first.zip.name,
+        if first.local {
+            format!("the folder {}", source().unwrap_or_default().display())
+        } else {
+            format!("the release {}", first.tag)
+        },
+        kjk.display()
+    ));
     let dir = download_dir(downloads, first.game);
-    if dir.exists() {
-        fs::remove_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let made = (|| {
+        if dir.exists() {
+            fs::remove_dir_all(&dir)?;
+        }
+        fs::create_dir_all(&dir)
+    })();
+    if let Err(error) = made {
+        return Err(failed(
+            write_failed(&error, downloads, first.zip.size),
+            format!("{}: {error}", dir.display()),
+        ));
     }
-    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let result = download_into(kjk, offers, &dir, progress);
     let _ = fs::remove_dir_all(&dir);
+    crate::log::line(format!(
+        "lighting: download for {} ended after {:.1} s: {}",
+        first.game.key(),
+        started.elapsed().as_secs_f64(),
+        match &result {
+            Ok(Outcome::Installed { areas, .. }) => format!("installed, {areas} areas"),
+            Ok(other) => format!("{other:?}"),
+            Err(why) => format!("failed: {why}"),
+        }
+    ));
     result
 }
 
@@ -575,16 +870,27 @@ fn download_into(
     progress: &Progress,
 ) -> Result<Outcome, String> {
     let mut chosen = 0;
-    let (offer, sums, manifest, check) = loop {
+    let (offer, sums, manifest, facts, check) = loop {
         let offer = &offers[chosen];
         progress.items.store(false, Ordering::Relaxed);
         progress.stage("Reading the list of areas");
         let sums = sums_text(offer)?;
         let manifest = fetch(offer, &offer.manifest, &sums, dir, progress)?;
-        let check = run_check(kjk, &manifest, progress)?;
+        let facts = facts(&fs::read_to_string(&manifest).unwrap_or_default());
+        crate::log::line(format!("lighting: the manifest says {facts:?}"));
+        if facts.game.as_deref() != Some(offer.game.key()) {
+            return Err(failed(
+                format!(
+                    "This download is not the new lighting for {}.",
+                    offer.game.name()
+                ),
+                format!("{} is for the game {:?}", offer.manifest.name, facts.game),
+            ));
+        }
+        let check = run_check(kjk, &manifest, offer.game, progress)?;
         let mismatch = check.format_mismatch().filter(|_| !check.allowed());
         let Some((bake, reads)) = mismatch else {
-            break (offer, sums, manifest, check);
+            break (offer, sums, manifest, facts, check);
         };
         // A newer download than this kjk reads: an older release may have
         // the format it reads.
@@ -605,12 +911,28 @@ fn download_into(
                 check.needs, check.matching, check.areas
             )
         });
+        let why = format!("{why} Nothing was downloaded or installed.");
         return Ok(Outcome::Refused { why });
     }
 
     progress.items.store(false, Ordering::Relaxed);
     progress.stage("Downloading");
     let zip = fetch(offer, &offer.zip, &sums, dir, progress)?;
+    // The manifest gives the zip's name and size too: a zip that is not the
+    // one the manifest names is turned away before kjk reads it.
+    let bytes = fs::metadata(&zip).map_or(0, |m| m.len());
+    if let Some((name, size)) = &facts.archive {
+        if *name != offer.zip.name || *size != bytes {
+            let _ = fs::remove_file(&zip);
+            return Err(failed(
+                DAMAGED,
+                format!(
+                    "the manifest names {name} with {size} bytes; the download is {} with {bytes} bytes",
+                    offer.zip.name
+                ),
+            ));
+        }
+    }
 
     progress.locked.store(true, Ordering::Relaxed);
     progress.items.store(true, Ordering::Relaxed);
@@ -625,8 +947,18 @@ fn download_into(
         "--json".as_ref(),
     ];
     let answer = run_kjk(kjk, &args, Some(progress), &mut |step| show(progress, step))?
-        .ok_or("This version of kjk cannot install the new lighting.")?;
-    let line = answer.games.first().ok_or("kjk did not answer.")?;
+        .ok_or_else(|| {
+            failed(
+                "This version of kjk cannot install the new lighting. Update kjk, then try again.",
+                "kjk printed no answer to lighting install",
+            )
+        })?;
+    let line = answer.games.first().ok_or_else(|| {
+        failed(
+            format!("kjk did not answer. {}", log_hint()),
+            "kjk printed no game line to lighting install",
+        )
+    })?;
     match line.status.as_str() {
         "installed" => Ok(Outcome::Installed {
             areas: line.areas.unwrap_or(check.areas),
@@ -635,7 +967,13 @@ fn download_into(
         "refused" => Ok(Outcome::Refused {
             why: line.why.clone().unwrap_or_default(),
         }),
-        _ => Err(line.why.clone().unwrap_or_else(|| line.status.clone())),
+        _ => Err(failed(
+            format!(
+                "kjk could not install it, and the lighting you had before is unchanged. {}",
+                log_hint()
+            ),
+            line.why.clone().unwrap_or_else(|| line.status.clone()),
+        )),
     }
 }
 
@@ -648,13 +986,26 @@ fn format_of(offer: &Offer, dir: &Path, progress: &Progress) -> Option<u32> {
     manifest_format(&fs::read_to_string(path).ok()?)
 }
 
+/// Shows kjk's progress line: the areas checked, then the areas unpacked.
 fn show(progress: &Progress, step: &Step) {
+    let stage = match step.step.as_str() {
+        "unpack" => "Unpacking the areas",
+        _ => "Checking your game files",
+    };
+    if progress.snapshot().0 != stage {
+        progress.stage(stage);
+    }
     progress.total.store(step.total, Ordering::Relaxed);
     progress.done.store(step.done, Ordering::Relaxed);
 }
 
-/// `kjk lighting check <manifest> --json`, with its progress.
-fn run_check(kjk: &Path, manifest: &Path, progress: &Progress) -> Result<Check, String> {
+/// `kjk lighting check <manifest> --game <game> --json`, with its progress.
+fn run_check(
+    kjk: &Path,
+    manifest: &Path,
+    game: Game,
+    progress: &Progress,
+) -> Result<Check, String> {
     progress.items.store(true, Ordering::Relaxed);
     progress.total.store(0, Ordering::Relaxed);
     progress.done.store(0, Ordering::Relaxed);
@@ -663,18 +1014,48 @@ fn run_check(kjk: &Path, manifest: &Path, progress: &Progress) -> Result<Check, 
         "lighting".as_ref(),
         "check".as_ref(),
         manifest.as_os_str(),
+        "--game".as_ref(),
+        game.key().as_ref(),
         "--json".as_ref(),
     ];
     let answer = run_kjk(kjk, &args, Some(progress), &mut |step| show(progress, step))?
-        .ok_or("This version of kjk cannot check the new lighting.")?;
-    match answer.check {
-        Some(check) => Ok(check),
-        None => Err(answer
-            .games
-            .first()
-            .and_then(|line| line.why.clone())
-            .unwrap_or_else(|| "kjk did not answer.".into())),
-    }
+        .ok_or_else(|| {
+            failed(
+                "This version of kjk cannot install the new lighting. Update kjk, then try again.",
+                "kjk printed no answer to lighting check",
+            )
+        })?;
+    let Some(check) = answer.check else {
+        return Err(failed(
+            format!("kjk could not check your game files. {}", log_hint()),
+            answer
+                .games
+                .first()
+                .and_then(|line| line.why.clone())
+                .unwrap_or_else(|| "kjk printed no check".into()),
+        ));
+    };
+    let fall_back: Vec<String> = check
+        .fall_back
+        .iter()
+        .map(|f| format!("{}: {}", f.area, f.why))
+        .collect();
+    crate::log::line(format!(
+        "lighting: the check says {}: {} of {} areas match, objects differ in {}, {} keep the game's lighting, needs {}{}{}",
+        check.status,
+        check.matching,
+        check.areas,
+        check.placeables_differ.len(),
+        check.fall_back.len(),
+        check.needs,
+        if check.cached { ", from an earlier check" } else { "" },
+        if fall_back.is_empty() {
+            String::new()
+        } else {
+            format!("\n{}", fall_back.join("\n"))
+        }
+    ));
+    Ok(check)
 }
 
 #[cfg(test)]
@@ -921,7 +1302,7 @@ mod tests {
         let into = scratch("bad-into");
         let progress = Progress::default();
         let failed = fetch(offer, &offer.zip, &sums, &into, &progress);
-        assert!(failed.unwrap_err().contains("does not match SHA256SUMS"));
+        assert_eq!(failed.unwrap_err(), DAMAGED);
         assert!(!into.join("kjk-lighting-k1-2.zip").exists());
 
         progress.cancel.store(true, Ordering::Relaxed);
@@ -962,10 +1343,64 @@ mod tests {
     }
 
     #[test]
+    fn a_full_or_locked_disk_is_said_plainly() {
+        let dir = Path::new("downloads");
+        let full = std::io::Error::from_raw_os_error(if cfg!(windows) { 112 } else { 28 });
+        let words = write_failed(&full, dir, 340_000_000);
+        assert!(
+            words.starts_with("There is not enough free space"),
+            "{words}"
+        );
+        assert!(!words.contains("os error"), "{words}");
+        let locked = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        let words = write_failed(&locked, dir, 1);
+        assert!(words.contains("not allowed to write"), "{words}");
+    }
+
+    #[test]
+    fn reads_the_manifest_facts() {
+        let text = "# kjk's lighting download
+game tsl
+format 2
+needs TSLRCM
+archive kjk-lighting-tsl-1.zip blake3 25aa bytes 213876600
+area 001ebo module 001ebo rooms a placeables b
+area 002ebo module 002ebo rooms c placeables d
+";
+        assert_eq!(
+            facts(text),
+            Facts {
+                game: Some("tsl".into()),
+                format: Some(2),
+                needs: Some("TSLRCM".into()),
+                archive: Some(("kjk-lighting-tsl-1.zip".into(), 213_876_600)),
+                areas: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn says_how_many_areas_match() {
+        let Some(Line::Answer(answer)) = parse_line(ALLOWED) else {
+            panic!("no answer");
+        };
+        let mut check = answer.check.unwrap();
+        assert_eq!(
+            matching_words(&check),
+            "34 of the 35 areas match your game files."
+        );
+        check.matching = 35;
+        assert_eq!(
+            matching_words(&check),
+            "All 35 areas match your game files."
+        );
+    }
+
+    #[test]
     fn a_download_without_sha256sums_is_refused() {
         let dir = source_folder("no-sums");
         fs::remove_file(dir.join("SHA256SUMS")).unwrap();
         let offer = &local_offers(&dir, Game::K1)[0];
-        assert!(sums_text(offer).unwrap_err().contains("SHA256SUMS"));
+        assert_eq!(sums_text(offer).unwrap_err(), UNCHECKED);
     }
 }

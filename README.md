@@ -60,7 +60,16 @@ of the two games that kjk finds.
 
 A cancelled or failed download deletes what it downloaded, so nothing is left
 half installed. The next try starts the download again from the beginning.
-"Remove" removes the new lighting of that game.
+When the launcher was closed during a download, it deletes what was left the
+next time it starts. kjk unpacks into a separate folder and puts it in place
+only when every area is unpacked, so the lighting you had before stays as it
+was until then. "Remove" removes the new lighting of that game.
+
+The launcher writes what the download did into its log,
+`launcher\logs\launcher.log` in the kjk folder: where each file came from,
+its size and its SHA-256, each command the launcher gave kjk with kjk's whole
+answer and its exit code, how many areas match, and how long each step took.
+Send that log with a report about the new lighting.
 
 The downloads are on the kjk releases whose tag starts with `lighting-`.
 `KJK_LIGHTING_SOURCE=<folder>` takes the same files from a folder instead:
@@ -145,6 +154,7 @@ Windows, `~/Library/Application Support/kjk` on macOS and
 | Backups | `backups\` |
 | Installed versions | `versions\`, one folder per version, such as `versions\0.19.0\`. Settings has a button to choose another install folder. |
 | The launcher's settings, release lists and downloads | `launcher\` |
+| The launcher's log | `launcher\logs\launcher.log`, and the one before it in `launcher.old.log` |
 
 Settings has a "Move" button that moves the whole kjk folder to another
 place, and the launcher then writes the new place into `moved-to.txt` in the
@@ -180,6 +190,7 @@ Point these variables at scratch folders before a test run:
 | `KJK_HOME` | The kjk folder. The "Move" button is off while it is set. |
 | `KJK_SETTINGS` | kjk's settings file. |
 | `KJK_SAVES` | kjk's saves folder. |
+| `KJK_LIGHTING_SOURCE=<folder>` | The new lighting comes from this folder instead of the `lighting-` releases. |
 | `KJK_LAUNCHER_OFFLINE=1` | The launcher acts as if GitHub could not be reached. |
 | `KJK_LAUNCHER_SHOT=<file.png>` | The launcher saves a picture of its window and closes. |
 | `KJK_LAUNCHER_TAB=versions` | The window opens on that page (play, versions or settings). |

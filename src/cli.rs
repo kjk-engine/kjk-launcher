@@ -334,6 +334,19 @@ fn lighting(
         Some("download") => {
             let game = game()?;
             let offers = lighting::available(&releases(), game);
+            let state = lighting::status(&kjk)
+                .state(game)
+                .cloned()
+                .unwrap_or(State::Missing);
+            if let (Some(offer), State::Installed { areas, .. }) = (offers.first(), &state) {
+                if !lighting::newer(&state, offer) {
+                    println!(
+                        "The new lighting for {} is already installed, with {areas} areas. There is no newer download.",
+                        game.name()
+                    );
+                    return Ok(());
+                }
+            }
             let progress = Arc::new(Progress::default());
             let worker = {
                 let (kjk, downloads, progress) =
@@ -343,34 +356,48 @@ fn lighting(
             watch(&progress, || worker.is_finished());
             let outcome = worker
                 .join()
-                .map_err(|_| "the download stopped unexpectedly".to_string())??;
+                .map_err(|_| "the download stopped unexpectedly".to_string())?
+                .map_err(|e| {
+                    format!(
+                        "The new lighting for {} was not installed. {e}",
+                        game.name()
+                    )
+                })?;
             match outcome {
                 Outcome::Installed { areas, check } => {
                     println!(
-                        "installed the new lighting for {}, {areas} areas",
-                        game.key()
+                        "The new lighting for {} is installed, with {areas} areas. {}",
+                        game.name(),
+                        lighting::matching_words(&check)
                     );
                     println!(
-                        "  {} of {} areas match; objects differ in {}; {} keep the game's lighting",
-                        check.matching,
-                        check.areas,
+                        "  objects differ in {} areas; {} areas keep the game's lighting",
                         check.placeables_differ.len(),
                         check.fall_back.len()
                     );
                     for fall in &check.fall_back {
                         println!("  {}: {}", fall.area, fall.why);
                     }
+                    Ok(())
                 }
-                Outcome::Refused { why } => println!("refused: {why}"),
-                Outcome::NeedsNewerKjk => println!("the download needs a newer kjk"),
-                Outcome::NeedsNewerDownload => println!("this kjk needs a newer download"),
+                Outcome::Refused { why } => Err(why),
+                Outcome::NeedsNewerKjk => Err("This download of the new lighting needs a newer version of kjk. Update kjk, then try again.".into()),
+                Outcome::NeedsNewerDownload => Err(format!(
+                    "This version of kjk needs a newer download of the new lighting for {}. There is none yet.",
+                    game.name()
+                )),
             }
-            Ok(())
         }
         Some("remove") => {
             let game = game()?;
-            lighting::remove(&kjk, game)?;
-            println!("removed the new lighting for {}", game.key());
+            if lighting::remove(&kjk, game)? {
+                println!("The new lighting for {} is removed.", game.name());
+            } else {
+                println!(
+                    "The new lighting for {} was not installed, so there was nothing to remove.",
+                    game.name()
+                );
+            }
             Ok(())
         }
         Some(other) => Err(format!("lighting {other}? Use download or remove.")),
@@ -382,6 +409,10 @@ fn watch(progress: &Progress, finished: impl Fn() -> bool) {
     use std::sync::atomic::Ordering;
     while !finished() {
         let (stage, done, total) = progress.snapshot();
+        if stage.is_empty() {
+            std::thread::sleep(Duration::from_millis(50));
+            continue;
+        }
         if progress.items.load(Ordering::Relaxed) {
             eprint!("\r{stage}: {done} / {total}            ");
         } else {
