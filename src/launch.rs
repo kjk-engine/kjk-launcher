@@ -93,6 +93,11 @@ pub fn play(paths: &Paths, config: &mut Config, args: &[String]) -> Result<Start
     }
     let mut env = crate::config::kjk_env();
     env.extend(reshade_env());
+    if config.skip_splash {
+        // Passed as an environment variable rather than `--no-splash` so older
+        // kjk versions that predate the flag still start without error.
+        env.push(("KJK_NO_SPLASH", PathBuf::from("1")));
+    }
     let child = start(&version.dir, &install::game_exe(&version.dir), args, &env)?;
     Ok(Started {
         tag,

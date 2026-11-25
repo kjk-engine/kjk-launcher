@@ -45,6 +45,15 @@ impl Ready {
         }
         ui.add_space(theme::SPACE_6);
 
+        widgets::section_label(ui, "Startup");
+        changed |= widgets::checkbox(
+            ui,
+            &mut self.config.skip_splash,
+            "Skip the splash screen when kjk starts",
+        )
+        .changed();
+        ui.add_space(theme::SPACE_6);
+
         widgets::section_label(ui, "Storage");
         changed |= widgets::checkbox(
             ui,
