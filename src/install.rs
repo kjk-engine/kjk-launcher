@@ -121,8 +121,10 @@ pub fn dir_size(dir: &Path) -> u64 {
         .sum()
 }
 
-/// Deletes what is left of earlier uninstalls that could not finish.
+/// Deletes what is left of earlier uninstalls that could not finish, and
+/// of downloads of the new lighting that never ended.
 pub fn clean_leftovers(paths: &Paths) {
+    crate::lighting::clean_downloads(&paths.downloads);
     for entry in fs::read_dir(&paths.versions)
         .into_iter()
         .flatten()
@@ -181,6 +183,10 @@ pub struct Progress {
     pub done: AtomicU64,
     pub total: AtomicU64,
     pub cancel: AtomicBool,
+    /// While set, the progress counts areas or files, not bytes.
+    pub items: AtomicBool,
+    /// While set, the step cannot be stopped, so Cancel is hidden.
+    pub locked: AtomicBool,
     stage: Mutex<String>,
 }
 
@@ -228,7 +234,7 @@ pub fn fetch_package(
         Ok(hash) => hash,
         Err(e) => {
             let _ = fs::remove_file(&part);
-            return Err(e);
+            return Err(e.to_string());
         }
     };
     if actual != expected {
@@ -291,7 +297,7 @@ pub fn install(paths: &Paths, release: &Release, progress: &Progress) -> Result<
     unpacked
 }
 
-fn expected_hash(sums: &str, file: &str) -> Option<String> {
+pub(crate) fn expected_hash(sums: &str, file: &str) -> Option<String> {
     sums.lines().find_map(|line| {
         let mut words = line.split_whitespace();
         let hash = words.next()?;
@@ -300,7 +306,7 @@ fn expected_hash(sums: &str, file: &str) -> Option<String> {
     })
 }
 
-fn get_text(url: &str) -> Result<String, String> {
+pub(crate) fn get_text(url: &str) -> Result<String, String> {
     let mut response = github::agent(Some(std::time::Duration::from_secs(30)))
         .get(url)
         .call()
@@ -314,14 +320,45 @@ fn get_text(url: &str) -> Result<String, String> {
         .map_err(|e| format!("{url}: {e}"))
 }
 
+/// Why a download failed.
+#[derive(Debug)]
+pub enum Failure {
+    Cancelled,
+    /// Nothing came: the server could not be reached, or it answered with
+    /// an error.
+    Unreachable(String),
+    /// The download stopped part way.
+    Interrupted(String),
+    /// The file at this path could not be written.
+    Write(PathBuf, io::Error),
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Failure::Cancelled => write!(f, "cancelled"),
+            Failure::Unreachable(why) | Failure::Interrupted(why) => write!(f, "{why}"),
+            Failure::Write(path, e) => write!(f, "{}: {e}", path.display()),
+        }
+    }
+}
+
 /// Downloads `url` to `to` and returns the file's SHA-256 in hex.
-fn download(url: &str, to: &Path, size: u64, progress: &Progress) -> Result<String, String> {
+pub(crate) fn download(
+    url: &str,
+    to: &Path,
+    size: u64,
+    progress: &Progress,
+) -> Result<String, Failure> {
     let mut response = github::agent(None)
         .get(url)
         .call()
-        .map_err(|e| format!("could not download {url} ({e})"))?;
+        .map_err(|e| Failure::Unreachable(format!("could not download {url} ({e})")))?;
     if response.status().as_u16() != 200 {
-        return Err(format!("{url} answered {}", response.status()));
+        return Err(Failure::Unreachable(format!(
+            "{url} answered {}",
+            response.status()
+        )));
     }
     let total = response
         .headers()
@@ -332,26 +369,27 @@ fn download(url: &str, to: &Path, size: u64, progress: &Progress) -> Result<Stri
     progress.done.store(0, Ordering::Relaxed);
 
     let mut reader = response.body_mut().as_reader();
-    let file = File::create(to).map_err(|e| format!("{}: {e}", to.display()))?;
+    let file = File::create(to).map_err(|e| Failure::Write(to.to_path_buf(), e))?;
     let mut file = BufWriter::new(file);
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 256 * 1024];
     loop {
         if progress.cancel.load(Ordering::Relaxed) {
-            return Err("cancelled".into());
+            return Err(Failure::Cancelled);
         }
         let n = reader
             .read(&mut buffer)
-            .map_err(|e| format!("download interrupted ({e})"))?;
+            .map_err(|e| Failure::Interrupted(format!("download interrupted ({e})")))?;
         if n == 0 {
             break;
         }
         hasher.update(&buffer[..n]);
         file.write_all(&buffer[..n])
-            .map_err(|e| format!("{}: {e}", to.display()))?;
+            .map_err(|e| Failure::Write(to.to_path_buf(), e))?;
         progress.done.fetch_add(n as u64, Ordering::Relaxed);
     }
-    file.flush().map_err(|e| format!("{}: {e}", to.display()))?;
+    file.flush()
+        .map_err(|e| Failure::Write(to.to_path_buf(), e))?;
     Ok(hasher
         .finalize()
         .iter()

@@ -156,6 +156,7 @@ impl Paths {
         for dir in [&paths.root, &paths.backups, &paths.downloads] {
             fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
+        crate::log::open(&paths.root);
         Ok((paths, problem))
     }
 

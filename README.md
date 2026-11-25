@@ -40,6 +40,42 @@ Version 0.1.0 cannot update itself. Replace it with 0.2.0 by hand once.
 - The launcher works offline. It then says that it could not check GitHub
   for updates, and Play still works.
 
+## New lighting
+
+The new lighting is an optional download for KOTOR and KOTOR II. It is made
+for KOTOR with the K1 Community Patch installed, and for KOTOR II with TSLRCM
+installed. The Settings page has a "New lighting" section with a row for each
+of the two games that kjk finds.
+
+1. The launcher first downloads only a small list of the download's areas.
+   kjk compares that list with your game files.
+2. When too few areas match, kjk says why, and the launcher downloads
+   nothing more.
+3. Otherwise the launcher downloads the zip, checks it against the
+   release's `SHA256SUMS`, and kjk installs it.
+4. To use the new lighting, start kjk again, open Options, and set Lighting
+   to Enhanced Lightmaps.
+
+A cancelled or failed download deletes what it downloaded, so nothing is left
+half installed. The next try starts the download again from the beginning.
+When the launcher was closed during a download, it deletes what was left the
+next time it starts. kjk unpacks into a separate folder and puts it in place
+only when every area is unpacked, so the lighting you had before stays as it
+was until then. "Remove" removes the new lighting of that game.
+
+The launcher writes what the download did into its log,
+`launcher\logs\launcher.log` in the kjk folder: where each file came from,
+its size and its SHA-256, each command the launcher gave kjk with kjk's whole
+answer and its exit code, how many areas match, and how long each step took.
+Send that log with a report about the new lighting.
+
+The downloads are on the kjk releases whose tag starts with `lighting-`.
+`KJK_LIGHTING_SOURCE=<folder>` takes the same files from a folder instead:
+`kjk-lighting-<k1|tsl>-<label>.zip`, the list `kjk-lighting-<k1|tsl>-<label>.txt`
+and `SHA256SUMS`. `kjk-launcher-cli lighting` shows the state, and
+`kjk-launcher-cli lighting download k1` and `lighting remove k1` do the same as
+the buttons.
+
 ## Steam play time
 
 Steam can count the time you play kjk under KOTOR or KOTOR II. Open the
@@ -113,6 +149,7 @@ Windows, `~/Library/Application Support/kjk` on macOS and
 | Backups | `backups\` |
 | Installed versions | `versions\`, one folder per version, such as `versions\0.19.0\`. Settings has a button to choose another install folder. |
 | The launcher's settings, release lists and downloads | `launcher\` |
+| The launcher's log | `launcher\logs\launcher.log`, and the one before it in `launcher.old.log` |
 
 Settings has a "Move" button that moves the whole kjk folder to another
 place, and the launcher then writes the new place into `moved-to.txt` in the
@@ -148,6 +185,7 @@ Point these variables at scratch folders before a test run:
 | `KJK_HOME` | The kjk folder. The "Move" button is off while it is set. |
 | `KJK_SETTINGS` | kjk's settings file. |
 | `KJK_SAVES` | kjk's saves folder. |
+| `KJK_LIGHTING_SOURCE=<folder>` | The new lighting comes from this folder instead of the `lighting-` releases. |
 | `KJK_LAUNCHER_OFFLINE=1` | The launcher acts as if GitHub could not be reached. |
 | `KJK_LAUNCHER_SHOT=<file.png>` | The launcher saves a picture of its window and closes. |
 | `KJK_LAUNCHER_TAB=versions` | The window opens on that page (play, versions or settings). |
