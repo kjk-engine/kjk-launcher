@@ -33,6 +33,8 @@ pub struct Config {
     pub keep_backups: usize,
     /// Versions that have been started at least once.
     pub launched: Vec<String>,
+    /// Skip kjk's startup splash screen (`KJK_NO_SPLASH=1`).
+    pub skip_splash: bool,
 }
 
 impl Default for Config {
@@ -47,6 +49,7 @@ impl Default for Config {
             backup_before_new_version: true,
             keep_backups: 10,
             launched: Vec::new(),
+            skip_splash: false,
         }
     }
 }
