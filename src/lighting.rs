@@ -8,6 +8,18 @@
 //! The downloads are on GitHub releases of kjk whose tag starts with
 //! `lighting-`. Each holds, for each game, `kjk-lighting-<k1|tsl>-<label>.zip`,
 //! its manifest `kjk-lighting-<k1|tsl>-<label>.txt`, and `SHA256SUMS`.
+//!
+//! A release may also hold a second manifest for each game,
+//! `kjk-lighting-<k1|tsl>-<label>.manifest-2.txt`. It names the same zip and
+//! adds the lines that let kjk check an area one lightmap at a time, so that
+//! an area where only some rooms differ still shows the new lighting in the
+//! others. kjk v0.21.0 and older cannot read it. The launcher uses the second
+//! manifest only when kjk knows `kjk lighting refresh` (`reads_manifest_2`),
+//! and only when `SHA256SUMS` lists it. Otherwise it uses the first manifest,
+//! as before.
+//!
+//! A player who installed the lighting from the first manifest gets the
+//! second one without downloading the zip again (`refresh`).
 //! `KJK_LIGHTING_SOURCE=<folder>` takes the same files from a folder instead,
 //! for tests and for installs without a network. After the files are
 //! fetched, both take the same path.
@@ -33,6 +45,14 @@ pub const TAG_PREFIX: &str = "lighting-";
 
 /// The variable that names a folder to take the download from.
 pub const SOURCE_VAR: &str = "KJK_LIGHTING_SOURCE";
+
+/// The end of a second manifest's name on a release:
+/// `kjk-lighting-tsl-1.manifest-2.txt`.
+pub const MANIFEST_2_SUFFIX: &str = ".manifest-2.txt";
+
+/// The file that kjk writes into a game's installed folder when the
+/// download was installed or refreshed from a second manifest.
+pub const INSTALLED_MANIFEST_2: &str = "manifest-2.txt";
 
 /// The games with a lighting download.
 pub const GAMES: [Game; 2] = [Game::K1, Game::Tsl];
@@ -62,16 +82,21 @@ pub struct Offer {
     /// The part of the file names after the game: `1` in `kjk-lighting-k1-1.zip`.
     pub label: String,
     pub manifest: Asset,
+    /// The second manifest, when the release has one.
+    pub manifest_2: Option<Asset>,
     pub zip: Asset,
     pub sums: Option<Asset>,
     /// From the source folder: each asset's `browser_download_url` is a path.
     pub local: bool,
 }
 
-/// The label of a game's manifest named `name`: `1` for
-/// `kjk-lighting-k1-1.txt` and game K1.
+/// The label of a game's first manifest named `name`: `1` for
+/// `kjk-lighting-k1-1.txt` and game K1. A second manifest has no label here.
 fn manifest_label(name: &str, game: Game) -> Option<&str> {
     let prefix = format!("kjk-lighting-{}-", game.key());
+    if name.ends_with(MANIFEST_2_SUFFIX) {
+        return None;
+    }
     name.strip_prefix(&prefix)?
         .strip_suffix(".txt")
         .filter(|label| !label.is_empty())
@@ -81,8 +106,15 @@ fn zip_name(game: Game, label: &str) -> String {
     format!("kjk-lighting-{}-{label}.zip", game.key())
 }
 
-/// The newest manifest and its zip among `assets`, with `SHA256SUMS`.
-fn pick(assets: &[Asset], game: Game) -> Option<(String, Asset, Asset, Option<Asset>)> {
+/// The name of the second manifest beside the zip of `label`:
+/// `kjk-lighting-tsl-1.manifest-2.txt`.
+pub fn manifest_2_name(game: Game, label: &str) -> String {
+    format!("kjk-lighting-{}-{label}{MANIFEST_2_SUFFIX}", game.key())
+}
+
+/// The newest manifest and its zip among `assets`, with the second manifest
+/// and `SHA256SUMS` when they are there, as an offer from `tag`.
+fn pick(assets: &[Asset], game: Game, tag: &str, local: bool) -> Option<Offer> {
     let mut found: Vec<(String, Asset, Asset)> = assets
         .iter()
         .filter_map(|manifest| {
@@ -93,8 +125,17 @@ fn pick(assets: &[Asset], game: Game) -> Option<(String, Asset, Asset, Option<As
         .collect();
     found.sort_by(|a, b| label_order(&b.0, &a.0));
     let (label, manifest, zip) = found.into_iter().next()?;
-    let sums = assets.iter().find(|a| a.name == "SHA256SUMS").cloned();
-    Some((label, manifest, zip, sums))
+    let named = |name: &str| assets.iter().find(|a| a.name == name).cloned();
+    Some(Offer {
+        tag: tag.to_string(),
+        game,
+        manifest_2: named(&manifest_2_name(game, &label)),
+        sums: named("SHA256SUMS"),
+        label,
+        manifest,
+        zip,
+        local,
+    })
 }
 
 /// Labels by their numbers when both are numbers, else by their text.
@@ -111,16 +152,7 @@ pub fn in_release(release: &Release, game: Game) -> Option<Offer> {
     if release.draft || !release.tag_name.starts_with(TAG_PREFIX) {
         return None;
     }
-    let (label, manifest, zip, sums) = pick(&release.assets, game)?;
-    Some(Offer {
-        tag: release.tag_name.clone(),
-        game,
-        label,
-        manifest,
-        zip,
-        sums,
-        local: false,
-    })
+    pick(&release.assets, game, &release.tag_name, false)
 }
 
 /// The downloads for `game` in GitHub's list of releases, newest first: by
@@ -163,18 +195,7 @@ pub fn local_offers(dir: &Path, game: Game) -> Vec<Offer> {
             size: entry.metadata().map_or(0, |m| m.len()),
         })
         .collect();
-    pick(&assets, game)
-        .map(|(label, manifest, zip, sums)| Offer {
-            tag: "local".into(),
-            game,
-            label,
-            manifest,
-            zip,
-            sums,
-            local: true,
-        })
-        .into_iter()
-        .collect()
+    pick(&assets, game, "local", true).into_iter().collect()
 }
 
 /// The folder `KJK_LIGHTING_SOURCE` names, when it is set.
@@ -211,6 +232,9 @@ pub struct GameLine {
     pub areas: Option<usize>,
     #[serde(default)]
     pub archive: Option<String>,
+    /// The installed folder, for a line of `lighting status`.
+    #[serde(default)]
+    pub path: Option<String>,
     #[serde(default)]
     pub why: Option<String>,
     /// What went wrong, for a line that failed or was refused: one of
@@ -230,6 +254,17 @@ pub struct FallBack {
     pub why: String,
 }
 
+/// An area where some of the baked lightmaps match the player's files.
+/// The game shows the new lighting in the rooms of the lightmaps that match.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Partial {
+    pub area: String,
+    /// How many of its baked lightmaps match.
+    pub matching: usize,
+    /// How many baked lightmaps it has.
+    pub lightmaps: usize,
+}
+
 /// What `kjk lighting check` found.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Check {
@@ -244,6 +279,10 @@ pub struct Check {
     pub matched: Vec<String>,
     #[serde(default)]
     pub placeables_differ: Vec<String>,
+    /// The areas that show the new lighting in part. A kjk that reads only
+    /// the first manifest gives none, and then this is `None`.
+    #[serde(default)]
+    pub partial: Option<Vec<Partial>>,
     #[serde(default)]
     pub fall_back: Vec<FallBack>,
     #[serde(default)]
@@ -307,7 +346,7 @@ pub struct Answer {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Line {
     Progress(Step),
-    Answer(Answer),
+    Answer(Box<Answer>),
 }
 
 /// One line of kjk's output, or `None` when it is not one of its JSON lines.
@@ -327,17 +366,19 @@ pub fn parse_line(text: &str) -> Option<Line> {
     if games.is_empty() && check.is_none() {
         return None;
     }
-    Some(Line::Answer(Answer { games, check }))
+    Some(Line::Answer(Box::new(Answer { games, check })))
 }
 
 /// What is installed for one game.
 #[derive(Clone, Debug, PartialEq)]
 pub enum State {
     Missing,
-    /// Installed with this many areas, from the zip of this name.
+    /// Installed with this many areas, from the zip of this name. `exact`
+    /// is whether it was installed or refreshed from a second manifest.
     Installed {
         areas: usize,
         archive: String,
+        exact: bool,
     },
     /// Installed, but kjk cannot read it, and why.
     Broken(String),
@@ -369,7 +410,7 @@ pub fn parse_status(stdout: &str) -> Status {
         .lines()
         .rev()
         .find_map(|line| match parse_line(line) {
-            Some(Line::Answer(answer)) => Some(answer),
+            Some(Line::Answer(answer)) => Some(*answer),
             _ => None,
         });
     answer.map_or(Status::TooOld, |answer| from_answer(&answer))
@@ -384,6 +425,8 @@ fn from_answer(answer: &Answer) -> Status {
             "installed" => State::Installed {
                 areas: line.areas.unwrap_or(0),
                 archive: line.archive.clone().unwrap_or_default(),
+                exact: (line.path.as_deref())
+                    .is_some_and(|path| Path::new(path).join(INSTALLED_MANIFEST_2).is_file()),
             },
             "broken" => State::Broken(line.why.clone().unwrap_or_default()),
             _ => State::Failed(match line.kind.as_deref() {
@@ -403,6 +446,14 @@ fn from_answer(answer: &Answer) -> Status {
 /// another name.
 pub fn newer(state: &State, offer: &Offer) -> bool {
     matches!(state, State::Installed { archive, .. } if *archive != offer.zip.name)
+}
+
+/// Whether the lighting installed in `state` is `offer`'s zip, installed from
+/// the first manifest, while `offer` has a second manifest. Then `refresh`
+/// adds the second manifest without downloading the zip again.
+pub fn wants_refresh(state: &State, offer: &Offer) -> bool {
+    offer.manifest_2.is_some()
+        && matches!(state, State::Installed { archive, exact: false, .. } if *archive == offer.zip.name)
 }
 
 /// What a cancelled download returns as its error.
@@ -502,6 +553,7 @@ const NO_STORE: &str = "kjk could not find the folder where it keeps its files."
 enum Asked {
     Check,
     Install,
+    Refresh,
     Remove,
 }
 
@@ -549,6 +601,10 @@ fn kind_words(line: &GameLine, asked: Asked, game: Game, bytes: u64) -> Option<S
             "kjk could not open the downloaded file. Try the download again.".to_string()
         }
         "zip_mismatch" | "zip_damaged" => DAMAGED.to_string(),
+        "not_installed" => format!(
+            "The new lighting installed for {} is not the download that this update is for. Download the new lighting again.",
+            game.name()
+        ),
         "files_differ" | "bake_format" => game_names(line.why.as_deref()?),
         _ => return None,
     };
@@ -658,7 +714,7 @@ fn run_kjk(
                 }
                 Some(Line::Answer(found)) => {
                     output.push(text);
-                    answer = Some(found);
+                    answer = Some(*found);
                 }
                 None => output.push(text),
             },
@@ -753,17 +809,66 @@ pub enum Outcome {
     NeedsNewerDownload,
 }
 
-/// "All 75 areas match your game files." or "73 of the 75 areas match
-/// your game files."
+/// `count` followed by `one` when it is 1 and by `many` otherwise, as in
+/// "1 area" and "2 areas". kjk counts its words the same way.
+pub fn counted(count: usize, one: &str, many: &str) -> String {
+    format!("{count} {}", if count == 1 { one } else { many })
+}
+
+/// How many areas show the new lighting, in kjk's words. A kjk that reads
+/// the second manifest says how many show it in full, in part and not at
+/// all: "Of the 75 areas, 70 show it in full, 3 show it in part, and 2 keep
+/// the game's own lighting." An older kjk only says how many match: "73 of
+/// the 75 areas match your game files."
 pub fn matching_words(check: &Check) -> String {
+    let Some(partial) = &check.partial else {
+        return if check.matching == check.areas {
+            format!("All {} areas match your game files.", check.areas)
+        } else {
+            format!(
+                "{} of the {} areas match your game files.",
+                check.matching, check.areas
+            )
+        };
+    };
     if check.matching == check.areas {
-        format!("All {} areas match your game files.", check.areas)
-    } else {
-        format!(
-            "{} of the {} areas match your game files.",
-            check.matching, check.areas
-        )
+        return format!("All {} areas show it in full.", check.areas);
     }
+    format!(
+        "Of the {}, {} it in full, {} it in part, and {} the game's own lighting.",
+        counted(check.areas, "area", "areas"),
+        counted(check.matching, "shows", "show"),
+        counted(partial.len(), "shows", "show"),
+        counted(check.fall_back.len(), "keeps", "keep")
+    )
+}
+
+/// The sentences about the areas that do not show all of the new lighting,
+/// in kjk's words. They say that the player's game files differ, and never
+/// that a mod is to blame, because a player without the patch the lighting
+/// was made for reads the same sentences.
+pub fn area_sentences(check: &Check) -> Vec<String> {
+    let mut lines = Vec::new();
+    let partial = check.partial.as_deref().unwrap_or_default();
+    if !partial.is_empty() {
+        lines.push(format!(
+            "In {} some rooms keep the game's own lighting, because your game's files differ there from the files the lighting was made from.",
+            counted(partial.len(), "area", "areas")
+        ));
+    }
+    if !check.placeables_differ.is_empty() {
+        lines.push(format!(
+            "In {} the objects in the room differ from the ones the lighting was made with, so those objects keep their usual light.",
+            counted(check.placeables_differ.len(), "area", "areas")
+        ));
+    }
+    if !check.fall_back.is_empty() {
+        lines.push(format!(
+            "{} the game's own lighting, because your game's files differ from the files the lighting was made from.",
+            counted(check.fall_back.len(), "area keeps", "areas keep")
+        ));
+    }
+    lines
 }
 
 /// The text of `SHA256SUMS` beside `offer`.
@@ -940,19 +1045,7 @@ pub fn download(
         },
         kjk.display()
     ));
-    let dir = download_dir(downloads, first.game);
-    let made = (|| {
-        if dir.exists() {
-            fs::remove_dir_all(&dir)?;
-        }
-        fs::create_dir_all(&dir)
-    })();
-    if let Err(error) = made {
-        return Err(failed(
-            write_failed(&error, downloads, first.zip.size),
-            format!("{}: {error}", dir.display()),
-        ));
-    }
+    let dir = fresh_dir(downloads, first)?;
     let result = download_into(kjk, offers, &dir, progress);
     let _ = fs::remove_dir_all(&dir);
     crate::log::line(format!(
@@ -968,19 +1061,86 @@ pub fn download(
     result
 }
 
+/// The empty folder that `offer`'s files are downloaded into, under
+/// `downloads`. Anything an earlier download left there is deleted first.
+fn fresh_dir(downloads: &Path, offer: &Offer) -> Result<PathBuf, String> {
+    let dir = download_dir(downloads, offer.game);
+    let made = (|| {
+        if dir.exists() {
+            fs::remove_dir_all(&dir)?;
+        }
+        fs::create_dir_all(&dir)
+    })();
+    match made {
+        Ok(()) => Ok(dir),
+        Err(error) => Err(failed(
+            write_failed(&error, downloads, offer.zip.size),
+            format!("{}: {error}", dir.display()),
+        )),
+    }
+}
+
+/// Whether `kjk` reads a second manifest. kjk learned the second manifest
+/// and `kjk lighting refresh` together. Asked to refresh from a manifest
+/// that does not exist, a kjk that knows the command answers with a JSON
+/// line that says the file does not read. An older kjk answers with no JSON
+/// line, because it does not know the command. Nothing is changed either
+/// way. `dir` is the folder the missing file is named in.
+pub fn reads_manifest_2(kjk: &Path, dir: &Path) -> bool {
+    let missing = dir.join(format!("probe{MANIFEST_2_SUFFIX}"));
+    let args = [
+        "lighting".as_ref(),
+        "refresh".as_ref(),
+        missing.as_os_str(),
+        "--json".as_ref(),
+    ];
+    let reads = matches!(run_kjk(kjk, &args, None, &mut |_| {}), Ok(Some(_)));
+    crate::log::line(format!(
+        "lighting: this kjk {} the second manifest",
+        if reads { "reads" } else { "does not read" }
+    ));
+    reads
+}
+
+/// Fetches `offer`'s manifest into `dir`: the second manifest when `exact`
+/// says that kjk reads it and the release has it, else the first one. A
+/// second manifest that cannot be fetched or checked, as when `SHA256SUMS`
+/// does not list it, is logged, and the first one is fetched instead.
+fn fetch_manifest(
+    offer: &Offer,
+    exact: bool,
+    sums: &str,
+    dir: &Path,
+    progress: &Progress,
+) -> Result<PathBuf, String> {
+    if let Some(second) = offer.manifest_2.as_ref().filter(|_| exact) {
+        match fetch(offer, second, sums, dir, progress) {
+            Ok(path) => return Ok(path),
+            Err(e) if e == CANCELLED => return Err(e),
+            Err(_) => crate::log::line(format!(
+                "lighting: {} could not be used, so the launcher takes {}",
+                second.name, offer.manifest.name
+            )),
+        }
+    }
+    fetch(offer, &offer.manifest, sums, dir, progress)
+}
+
 fn download_into(
     kjk: &Path,
     offers: &[Offer],
     dir: &Path,
     progress: &Progress,
 ) -> Result<Outcome, String> {
+    // kjk is asked only when a release has a second manifest.
+    let exact = offers.iter().any(|offer| offer.manifest_2.is_some()) && reads_manifest_2(kjk, dir);
     let mut chosen = 0;
     let (offer, sums, manifest, facts, check) = loop {
         let offer = &offers[chosen];
         progress.items.store(false, Ordering::Relaxed);
         progress.stage("Reading the list of areas");
         let sums = sums_text(offer)?;
-        let manifest = fetch(offer, &offer.manifest, &sums, dir, progress)?;
+        let manifest = fetch_manifest(offer, exact, &sums, dir, progress)?;
         let facts = facts(&fs::read_to_string(&manifest).unwrap_or_default());
         crate::log::line(format!("lighting: the manifest says {facts:?}"));
         if facts.game.as_deref() != Some(offer.game.key()) {
@@ -1087,6 +1247,68 @@ fn download_into(
     }
 }
 
+/// Adds `offer`'s second manifest to the lighting installed from its zip
+/// with the first manifest, with `kjk lighting refresh`. Only the second
+/// manifest is downloaded, into a folder under `downloads` that is deleted
+/// at the end. `Ok(true)` when kjk refreshed the install, `Ok(false)` when
+/// there was nothing to do: the release has no second manifest, or this kjk
+/// does not read one. An error is the player's sentence, and the details are
+/// in the log. kjk changes nothing in the install when it fails, so the
+/// lighting installed before keeps working.
+pub fn refresh(kjk: &Path, offer: &Offer, downloads: &Path) -> Result<bool, String> {
+    if offer.manifest_2.is_none() {
+        return Ok(false);
+    }
+    let dir = fresh_dir(downloads, offer)?;
+    let result = refresh_in(kjk, offer, &dir);
+    let _ = fs::remove_dir_all(&dir);
+    crate::log::line(format!(
+        "lighting: refresh of {} from {}: {result:?}",
+        offer.game.key(),
+        offer.tag
+    ));
+    result
+}
+
+fn refresh_in(kjk: &Path, offer: &Offer, dir: &Path) -> Result<bool, String> {
+    let Some(second) = &offer.manifest_2 else {
+        return Ok(false);
+    };
+    if !reads_manifest_2(kjk, dir) {
+        return Ok(false);
+    }
+    let sums = sums_text(offer)?;
+    let manifest = fetch(offer, second, &sums, dir, &Progress::default())?;
+    let args = [
+        "lighting".as_ref(),
+        "refresh".as_ref(),
+        manifest.as_os_str(),
+        "--json".as_ref(),
+    ];
+    let answer = run_kjk(kjk, &args, None, &mut |_| {})?.ok_or_else(|| {
+        failed(
+            "This version of kjk cannot update the new lighting. Update kjk, then try again.",
+            "kjk printed no answer to lighting refresh",
+        )
+    })?;
+    match answer.games.first() {
+        Some(line) if line.status == "installed" => Ok(true),
+        Some(line) => Err(failed(
+            kind_words(line, Asked::Refresh, offer.game, 0).unwrap_or_else(|| {
+                format!(
+                    "kjk could not update the new lighting. The lighting you had before is unchanged. {}",
+                    log_hint()
+                )
+            }),
+            detail(line),
+        )),
+        None => Err(failed(
+            format!("kjk did not answer. {}", log_hint()),
+            "kjk printed no game line to lighting refresh",
+        )),
+    }
+}
+
 /// The format of `offer`'s manifest, fetched into `dir` and checked.
 fn format_of(offer: &Offer, dir: &Path, progress: &Progress) -> Option<u32> {
     let sums = sums_text(offer).ok()?;
@@ -1149,7 +1371,7 @@ fn run_check(
         .map(|f| format!("{}: {}", f.area, f.why))
         .collect();
     crate::log::line(format!(
-        "lighting: the check says {}{}: {} of {} areas match, objects differ in {}, {} keep the game's lighting, needs {}, bake format {}, kjk reads format {}{}{}",
+        "lighting: the check says {}{}: {} of {} areas match, {} match in part, objects differ in {}, {} keep the game's lighting, needs {}, bake format {}, kjk reads format {}{}{}",
         check.status,
         check
             .kind
@@ -1157,6 +1379,10 @@ fn run_check(
             .map_or(String::new(), |kind| format!(" ({kind})")),
         check.matching,
         check.areas,
+        check
+            .partial
+            .as_ref()
+            .map_or("none said".to_string(), |partial| partial.len().to_string()),
         check.placeables_differ.len(),
         check.fall_back.len(),
         check.needs,
@@ -1263,6 +1489,7 @@ mod tests {
         let installed = |archive: &str| State::Installed {
             areas: 35,
             archive: archive.into(),
+            exact: false,
         };
         assert!(newer(&installed("kjk-lighting-k1-1.zip"), offer));
         assert!(!newer(&installed("kjk-lighting-k1-2.zip"), offer));
@@ -1349,6 +1576,7 @@ mod tests {
             status: "failed".into(),
             areas: None,
             archive: None,
+            path: None,
             why: Some("C:\\s\\lighting\\tsl.partial: Access is denied. (os error 5)".into()),
             kind: kind.map(str::to_string),
             store: store.map(str::to_string),
@@ -1393,6 +1621,7 @@ mod tests {
             "zip_unreadable",
             "zip_mismatch",
             "zip_damaged",
+            "not_installed",
         ] {
             let said = words(kind, Asked::Install);
             assert!(!said.contains("os error"), "{kind}: {said}");
@@ -1445,10 +1674,20 @@ mod tests {
             status.state(Game::K1),
             Some(&State::Installed {
                 areas: 171,
-                archive: "kjk-lighting-k1-1.zip".into()
+                archive: "kjk-lighting-k1-1.zip".into(),
+                exact: false,
             })
         );
         assert_eq!(status.state(Game::Tsl), Some(&State::Missing));
+
+        // An install from a second manifest has kjk's manifest-2.txt.
+        let folder = scratch("status-exact");
+        fs::write(folder.join(INSTALLED_MANIFEST_2), "manifest 2\n").unwrap();
+        let line = serde_json::json!({"games": [{"game": "tsl", "status": "installed", "path": folder, "archive": "kjk-lighting-tsl-1.zip", "areas": 2}]});
+        assert!(matches!(
+            parse_status(&line.to_string()).state(Game::Tsl),
+            Some(State::Installed { exact: true, .. })
+        ));
 
         let broken =
             r#"{"games":[{"game":"k1","status":"broken","path":"x","why":"no manifest"}]}"#;
@@ -1497,26 +1736,109 @@ mod tests {
             .collect()
     }
 
+    /// Whether a source folder has the second manifest of label 2, and
+    /// whether `SHA256SUMS` lists it.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Second {
+        Absent,
+        Listed,
+        Unlisted,
+    }
+
+    const FIRST: &str = "kjk-lighting-k1-2.txt";
+    const SECOND: &str = "kjk-lighting-k1-2.manifest-2.txt";
+
     /// A source folder with two labels of K1's download and SHA256SUMS.
-    fn source_folder(name: &str) -> PathBuf {
+    fn source_folder(name: &str, second: Second) -> PathBuf {
         let dir = scratch(name);
         let mut sums = String::new();
-        for (file, bytes) in [
+        let mut files = vec![
             ("kjk-lighting-k1-1.txt", &b"game k1\nformat 2\n"[..]),
             ("kjk-lighting-k1-1.zip", &b"old zip"[..]),
-            ("kjk-lighting-k1-2.txt", &b"game k1\nformat 2\n"[..]),
+            (FIRST, &b"game k1\nformat 2\n"[..]),
             ("kjk-lighting-k1-2.zip", &b"new zip"[..]),
-        ] {
+        ];
+        if second != Second::Absent {
+            files.push((SECOND, &b"manifest 2\ngame k1\nformat 2\n"[..]));
+        }
+        for (file, bytes) in files {
             fs::write(dir.join(file), bytes).unwrap();
-            sums.push_str(&format!("{}  {file}\n", sha256(bytes)));
+            if !(file == SECOND && second == Second::Unlisted) {
+                sums.push_str(&format!("{}  {file}\n", sha256(bytes)));
+            }
         }
         fs::write(dir.join("SHA256SUMS"), sums).unwrap();
         dir
     }
 
+    /// A kjk that reads only the first manifest, or one that reads both.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Kjk {
+        Old,
+        New,
+    }
+
+    const NEW_CHECK: &str = r#"{"game":"k1","status":"allowed","needs":"the K1 Community Patch","areas":4,"matching":2,"matched":["m01aa"],"placeables_differ":["m01ab"],"partial":[{"area":"m02aa","matching":5,"lightmaps":7,"differ":[{"lightmap":"m02aa_lm3","rooms":["m02aa_03a"]}],"placeables_differ":false}],"fall_back":[{"area":"m12aa","why":"x"}],"cached":false,"why":null,"kind":null,"bake_format":2,"reads_format":2}"#;
+
+    const OLD_CHECK: &str = r#"{"game":"k1","status":"allowed","needs":"the K1 Community Patch","areas":4,"matching":3,"matched":["m01aa","m02aa"],"placeables_differ":["m01ab"],"fall_back":[{"area":"m12aa","why":"x"}],"cached":false,"why":null}"#;
+
+    /// A stand-in for kjk's `lighting` commands, written into `dir`. It
+    /// writes the arguments of each run into `dir/args.log`. `refresh` is
+    /// its answer to `lighting refresh` with a manifest that exists.
+    #[cfg(unix)]
+    fn stub_kjk(dir: &Path, kjk: Kjk, refresh: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let check = if kjk == Kjk::New {
+            NEW_CHECK
+        } else {
+            OLD_CHECK
+        };
+        let refresh_arm = match kjk {
+            Kjk::Old => "echo \"error: unrecognized subcommand 'refresh'\" >&2; exit 2".to_string(),
+            Kjk::New => format!(
+                r#"if [ -f "$3" ]; then echo '{refresh}'; else echo '{{"games":[{{"game":null,"status":"failed","why":"no file","kind":"list_unreadable"}}]}}'; exit 1; fi"#
+            ),
+        };
+        let script = format!(
+            r#"#!/bin/sh
+echo "$*" >> "{log}"
+case "$2" in
+  check) echo '{{"check":{check}}}' ;;
+  install) echo '{{"games":[{{"game":"k1","status":"installed","areas":4}}],"check":{check}}}' ;;
+  refresh) {refresh_arm} ;;
+  *) exit 2 ;;
+esac
+"#,
+            log = dir.join("args.log").display()
+        );
+        let path = dir.join("kjk.sh");
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    /// The file name of the manifest that the stub in `dir` was given for
+    /// each run of `verb`, and how many runs of `verb` there were.
+    #[cfg(unix)]
+    fn manifests_given(dir: &Path, verb: &str) -> Vec<String> {
+        let log = fs::read_to_string(dir.join("args.log")).unwrap_or_default();
+        log.lines()
+            .filter_map(|line| {
+                let words: Vec<&str> = line.split_whitespace().collect();
+                (words.get(1) == Some(&verb)).then(|| {
+                    let path = Path::new(words[2]);
+                    path.file_name().unwrap().to_string_lossy().into_owned()
+                })
+            })
+            .collect()
+    }
+
+    const REFRESHED: &str =
+        r#"{"games":[{"game":"k1","status":"installed","path":"x","areas":4,"exact":4}]}"#;
+
     #[test]
     fn takes_the_download_from_a_folder() {
-        let dir = source_folder("source");
+        let dir = source_folder("source", Second::Absent);
         let found = local_offers(&dir, Game::K1);
         assert_eq!(found.len(), 1);
         let offer = &found[0];
@@ -1536,7 +1858,7 @@ mod tests {
 
     #[test]
     fn a_file_that_does_not_match_or_is_cancelled_is_deleted() {
-        let dir = source_folder("bad");
+        let dir = source_folder("bad", Second::Absent);
         let offer = &local_offers(&dir, Game::K1)[0];
         let sums = sums_text(offer).unwrap();
         fs::write(dir.join("kjk-lighting-k1-2.zip"), b"changed").unwrap();
@@ -1639,9 +1961,183 @@ area 002ebo module 002ebo rooms c placeables d
 
     #[test]
     fn a_download_without_sha256sums_is_refused() {
-        let dir = source_folder("no-sums");
+        let dir = source_folder("no-sums", Second::Absent);
         fs::remove_file(dir.join("SHA256SUMS")).unwrap();
         let offer = &local_offers(&dir, Game::K1)[0];
         assert_eq!(sums_text(offer).unwrap_err(), UNCHECKED);
+    }
+    #[test]
+    fn an_offer_names_the_second_manifest_when_the_release_has_it() {
+        for (second, expected) in [
+            (Second::Absent, None),
+            (Second::Listed, Some(SECOND)),
+            (Second::Unlisted, Some(SECOND)),
+        ] {
+            let dir = source_folder(&format!("second-{second:?}"), second);
+            let offer = &local_offers(&dir, Game::K1)[0];
+            assert_eq!(offer.manifest.name, FIRST, "{second:?}");
+            assert_eq!(
+                offer.manifest_2.as_ref().map(|a| a.name.as_str()),
+                expected,
+                "{second:?}"
+            );
+        }
+        assert_eq!(
+            manifest_2_name(Game::Tsl, "1"),
+            "kjk-lighting-tsl-1.manifest-2.txt"
+        );
+    }
+
+    /// The whole download with a stand-in kjk. The second manifest is
+    /// checked and installed only when kjk reads it and `SHA256SUMS` lists
+    /// it. Otherwise the first manifest is, without an error.
+    #[cfg(unix)]
+    #[test]
+    fn downloads_with_the_manifest_kjk_reads() {
+        for (kjk, second, manifest) in [
+            (Kjk::New, Second::Listed, SECOND),
+            (Kjk::New, Second::Absent, FIRST),
+            (Kjk::New, Second::Unlisted, FIRST),
+            (Kjk::Old, Second::Listed, FIRST),
+            (Kjk::Old, Second::Absent, FIRST),
+        ] {
+            let case = format!("{kjk:?}-{second:?}");
+            let source = source_folder(&format!("flow-source-{case}"), second);
+            let bin = scratch(&format!("flow-kjk-{case}"));
+            let stub = stub_kjk(&bin, kjk, REFRESHED);
+            let downloads = scratch(&format!("flow-downloads-{case}"));
+            let offers = local_offers(&source, Game::K1);
+            let outcome = download(&stub, &offers, &downloads, &Progress::default());
+            let Ok(Outcome::Installed { areas, check }) = outcome else {
+                panic!("{case}: {outcome:?}");
+            };
+            assert_eq!(areas, 4, "{case}");
+            assert_eq!(check.partial.is_some(), kjk == Kjk::New, "{case}");
+            assert_eq!(manifests_given(&bin, "check"), [manifest], "{case}");
+            assert_eq!(manifests_given(&bin, "install"), [manifest], "{case}");
+            assert!(!download_dir(&downloads, Game::K1).exists(), "{case}");
+        }
+    }
+
+    #[test]
+    fn says_how_many_areas_show_the_new_lighting() {
+        let check = |text: &str| {
+            Check::deserialize(serde_json::from_str::<serde_json::Value>(text).unwrap()).unwrap()
+        };
+        let mut all_full = check(NEW_CHECK);
+        all_full.matching = all_full.areas;
+        let cases = [
+            (
+                check(NEW_CHECK),
+                "Of the 4 areas, 2 show it in full, 1 shows it in part, and 1 keeps the game's own lighting.",
+                vec![
+                    "In 1 area some rooms keep the game's own lighting, because your game's files differ there from the files the lighting was made from.",
+                    "In 1 area the objects in the room differ from the ones the lighting was made with, so those objects keep their usual light.",
+                    "1 area keeps the game's own lighting, because your game's files differ from the files the lighting was made from.",
+                ],
+            ),
+            (
+                all_full,
+                "All 4 areas show it in full.",
+                vec![
+                    "In 1 area some rooms keep the game's own lighting, because your game's files differ there from the files the lighting was made from.",
+                    "In 1 area the objects in the room differ from the ones the lighting was made with, so those objects keep their usual light.",
+                    "1 area keeps the game's own lighting, because your game's files differ from the files the lighting was made from.",
+                ],
+            ),
+            (
+                check(OLD_CHECK),
+                "3 of the 4 areas match your game files.",
+                vec![
+                    "In 1 area the objects in the room differ from the ones the lighting was made with, so those objects keep their usual light.",
+                    "1 area keeps the game's own lighting, because your game's files differ from the files the lighting was made from.",
+                ],
+            ),
+        ];
+        for (check, words, sentences) in cases {
+            assert_eq!(matching_words(&check), words);
+            assert_eq!(area_sentences(&check), sentences, "{words}");
+            for line in area_sentences(&check) {
+                assert!(!line.contains("mod"), "{line}");
+            }
+        }
+        let partial = &check(NEW_CHECK).partial.unwrap()[0];
+        assert_eq!(
+            (partial.area.as_str(), partial.matching, partial.lightmaps),
+            ("m02aa", 5, 7)
+        );
+    }
+
+    #[test]
+    fn only_an_install_from_the_first_manifest_of_the_same_zip_is_refreshed() {
+        let with_second = &local_offers(&source_folder("wants", Second::Listed), Game::K1)[0];
+        let without = &local_offers(&source_folder("wants-not", Second::Absent), Game::K1)[0];
+        let installed = |archive: &str, exact: bool| State::Installed {
+            areas: 4,
+            archive: archive.into(),
+            exact,
+        };
+        let cases = [
+            (installed("kjk-lighting-k1-2.zip", false), with_second, true),
+            (installed("kjk-lighting-k1-2.zip", true), with_second, false),
+            (
+                installed("kjk-lighting-k1-1.zip", false),
+                with_second,
+                false,
+            ),
+            (installed("kjk-lighting-k1-2.zip", false), without, false),
+            (State::Missing, with_second, false),
+        ];
+        for (state, offer, expected) in cases {
+            assert_eq!(wants_refresh(&state, offer), expected, "{state:?}");
+        }
+    }
+
+    /// `refresh` fetches only the second manifest and hands it to
+    /// `kjk lighting refresh`. A kjk that does not read it is not asked, and
+    /// a failure gives the player's sentence for its kind.
+    #[cfg(unix)]
+    #[test]
+    fn refreshes_without_the_zip() {
+        let not_installed = r#"{"games":[{"game":"k1","status":"failed","why":"The lighting download installed for KOTOR 1 is kjk-lighting-k1-1.zip.","kind":"not_installed"}]}"#;
+        type Case<'a> = (Kjk, Second, &'a str, Result<bool, &'a str>, &'a [&'a str]);
+        let cases: [Case; 5] = [
+            (Kjk::New, Second::Listed, REFRESHED, Ok(true), &[SECOND]),
+            (
+                Kjk::New,
+                Second::Listed,
+                not_installed,
+                Err("is not the download that this update is for"),
+                &[SECOND],
+            ),
+            (Kjk::New, Second::Unlisted, REFRESHED, Err(UNCHECKED), &[]),
+            (Kjk::New, Second::Absent, REFRESHED, Ok(false), &[]),
+            (Kjk::Old, Second::Listed, REFRESHED, Ok(false), &[]),
+        ];
+        for (i, (kjk, second, answer, expected, refreshed)) in cases.into_iter().enumerate() {
+            let case = format!("{i}-{kjk:?}-{second:?}");
+            let source = source_folder(&format!("refresh-source-{case}"), second);
+            let bin = scratch(&format!("refresh-kjk-{case}"));
+            let stub = stub_kjk(&bin, kjk, answer);
+            let downloads = scratch(&format!("refresh-downloads-{case}"));
+            let offer = &local_offers(&source, Game::K1)[0];
+            let result = refresh(&stub, offer, &downloads);
+            match expected {
+                Ok(done) => assert_eq!(result, Ok(done), "{case}"),
+                Err(words) => assert!(
+                    result.as_ref().unwrap_err().contains(words),
+                    "{case}: {result:?}"
+                ),
+            }
+            // The probe names a missing file, so only real refreshes count.
+            let given: Vec<String> = manifests_given(&bin, "refresh")
+                .into_iter()
+                .filter(|name| !name.starts_with("probe"))
+                .collect();
+            assert_eq!(given, refreshed, "{case}");
+            assert!(manifests_given(&bin, "check").is_empty(), "{case}");
+            assert!(manifests_given(&bin, "install").is_empty(), "{case}");
+            assert!(!download_dir(&downloads, Game::K1).exists(), "{case}");
+        }
     }
 }

@@ -256,6 +256,9 @@ struct Ready {
     lighting_done: HashMap<&'static str, crate::lighting::Outcome>,
     /// The games whose list of areas with the game's own lighting is open.
     lighting_open: HashSet<&'static str>,
+    /// The games whose lighting this session tried to refresh with a
+    /// second manifest.
+    lighting_refreshed: HashSet<&'static str>,
 }
 
 enum App {
@@ -307,6 +310,7 @@ impl App {
                     lighting_asking: None,
                     lighting_done: HashMap::new(),
                     lighting_open: HashSet::new(),
+                    lighting_refreshed: HashSet::new(),
                 };
                 ready.typed = shot::typed_open().map(|text| TypedPath {
                     folder_for: FolderFor::KjkFolder,

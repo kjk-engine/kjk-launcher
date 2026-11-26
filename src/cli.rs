@@ -307,9 +307,18 @@ fn lighting(
                 let state = status.state(game).cloned().unwrap_or(State::Missing);
                 let words = match &state {
                     State::Missing => "not installed".to_string(),
-                    State::Installed { areas, archive } => {
-                        format!("installed, {areas} areas, from {archive}")
-                    }
+                    State::Installed {
+                        areas,
+                        archive,
+                        exact,
+                    } => format!(
+                        "installed, {areas} areas, from {archive}{}",
+                        if *exact {
+                            ", with the second manifest"
+                        } else {
+                            ""
+                        }
+                    ),
                     State::Broken(why) => format!("installed but broken: {why}"),
                     State::Failed(why) => format!("unknown: {why}"),
                 };
@@ -339,6 +348,19 @@ fn lighting(
                 .cloned()
                 .unwrap_or(State::Missing);
             if let (Some(offer), State::Installed { areas, .. }) = (offers.first(), &state) {
+                if lighting::wants_refresh(&state, offer) {
+                    match lighting::refresh(&kjk, offer, &paths.downloads) {
+                        Ok(true) => {
+                            println!(
+                                "The new lighting for {} is updated without a new download. kjk now checks each area one lightmap at a time.",
+                                game.name()
+                            );
+                            return Ok(());
+                        }
+                        Ok(false) => {}
+                        Err(e) => eprintln!("note: {e}"),
+                    }
+                }
                 if !lighting::newer(&state, offer) {
                     println!(
                         "The new lighting for {} is already installed, with {areas} areas. There is no newer download.",
@@ -370,11 +392,15 @@ fn lighting(
                         game.name(),
                         lighting::matching_words(&check)
                     );
-                    println!(
-                        "  objects differ in {} areas; {} areas keep the game's lighting",
-                        check.placeables_differ.len(),
-                        check.fall_back.len()
-                    );
+                    for line in lighting::area_sentences(&check) {
+                        println!("  {line}");
+                    }
+                    for part in check.partial.iter().flatten() {
+                        println!(
+                            "  {}: {} of its {} lightmaps match",
+                            part.area, part.matching, part.lightmaps
+                        );
+                    }
                     for fall in &check.fall_back {
                         println!("  {}: {}", fall.area, fall.why);
                     }

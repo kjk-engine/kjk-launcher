@@ -49,10 +49,13 @@ of the two games that kjk finds.
 
 1. The launcher first downloads only a small list of the download's areas.
    kjk compares that list with your game files.
-2. When too few areas match, kjk says why, and the launcher downloads
-   nothing more.
+2. When no area matches, kjk says why, and the launcher downloads nothing
+   more. A kjk older than the one that reads the second list (see below)
+   also says why when fewer than 90% of the areas match.
 3. Otherwise the launcher downloads the zip, checks it against the
-   release's `SHA256SUMS`, and kjk installs it.
+   release's `SHA256SUMS`, and kjk installs it. The launcher then says how
+   many areas show the new lighting in full, how many show it in part, and
+   how many keep the game's own lighting.
 4. To use the new lighting, start kjk again, open Options, and set Lighting
    to Enhanced Lightmaps.
 
@@ -72,7 +75,18 @@ Send that log with a report about the new lighting.
 The downloads are on the kjk releases whose tag starts with `lighting-`.
 `KJK_LIGHTING_SOURCE=<folder>` takes the same files from a folder instead:
 `kjk-lighting-<k1|tsl>-<label>.zip`, the list `kjk-lighting-<k1|tsl>-<label>.txt`
-and `SHA256SUMS`. `kjk-launcher-cli lighting` shows the state, and
+and `SHA256SUMS`.
+
+A release may also hold a second list, `kjk-lighting-<k1|tsl>-<label>.manifest-2.txt`,
+for the same zip. With it, kjk checks each area one lightmap at a time, so an
+area where only some rooms differ shows the new lighting in the other rooms.
+The launcher uses the second list when kjk knows the command
+`kjk lighting refresh` and `SHA256SUMS` lists the file. Otherwise it uses the
+first list, as before. When the lighting was installed from the first list,
+the launcher adds the second list to it once, without downloading the zip
+again. If that fails, the lighting installed before keeps working.
+
+`kjk-launcher-cli lighting` shows the state, and
 `kjk-launcher-cli lighting download k1` and `lighting remove k1` do the same as
 the buttons.
 
