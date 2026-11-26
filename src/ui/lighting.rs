@@ -97,6 +97,11 @@ impl Ready {
             ui.add_space(theme::SPACE_6);
             return;
         }
+        for game in &found {
+            if self.refresh_lighting(ctx, &current, *game, &status) {
+                break;
+            }
+        }
         for game in found {
             widgets::hairline(ui);
             let state = status.state(game).cloned().unwrap_or(State::Missing);
@@ -201,6 +206,44 @@ impl Ready {
         if remove {
             self.start_lighting_remove(ctx, current, game);
         }
+    }
+
+    /// Adds the second manifest to `game`'s lighting when it was installed
+    /// from the first one (`light::wants_refresh`), once in each session.
+    /// It runs on the thread that asks kjk about the lighting, and kjk is
+    /// asked again when it is done. A refresh that fails is only logged,
+    /// because the lighting installed before keeps working. Returns whether
+    /// it started.
+    fn refresh_lighting(
+        &mut self,
+        ctx: &egui::Context,
+        current: &Installed,
+        game: Game,
+        status: &light::Status,
+    ) -> bool {
+        if self.job.is_some() || self.lighting_refreshed.contains(game.key()) {
+            return false;
+        }
+        let Some(offer) = light::available(&self.releases, game).into_iter().next() else {
+            return false;
+        };
+        let state = status.state(game).cloned().unwrap_or(State::Missing);
+        if !light::wants_refresh(&state, &offer) {
+            return false;
+        }
+        self.lighting_refreshed.insert(game.key());
+        let (tx, rx) = mpsc::channel();
+        let kjk = install::game_binary(&current.dir);
+        let downloads = self.paths.downloads.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = light::refresh(&kjk, &offer, &downloads);
+            let _ = tx.send(light::status(&kjk));
+            ctx.request_repaint();
+        });
+        self.lighting_asking = Some(rx);
+        self.lighting = Lighting::Asking(current.tag.clone());
+        true
     }
 
     /// Downloads and installs the new lighting for `game` as a job.
@@ -309,11 +352,7 @@ impl Ready {
 
 /// "1 area" or "35 areas".
 fn areas_word(count: usize) -> String {
-    if count == 1 {
-        "1 area".into()
-    } else {
-        format!("{count} areas")
-    }
+    light::counted(count, "area", "areas")
 }
 
 /// "Download the new lighting for KOTOR (about 300 MB)", or for an update
@@ -345,33 +384,30 @@ fn outcome_lines(ui: &mut egui::Ui, game: Game, done: &light::Outcome, open: boo
                 ui,
                 "To use it, close kjk if it is running and start it again. Then open Options and set Lighting to Enhanced Lightmaps.",
             );
-            if !check.placeables_differ.is_empty() {
-                widgets::muted(
-                    ui,
-                    format!(
-                        "In {}, the objects in the room differ from the ones the lighting was made with. Those objects keep their usual light.",
-                        areas_word(check.placeables_differ.len())
-                    ),
-                );
+            for line in light::area_sentences(check) {
+                widgets::muted(ui, line);
             }
-            if !check.fall_back.is_empty() {
-                widgets::muted(
-                    ui,
-                    format!(
-                        "{} of the {} keep the game's own lighting, because your game files there differ from the ones the lighting was made from.",
-                        check.fall_back.len(),
-                        areas_word(check.areas)
-                    ),
-                );
+            let partial: Vec<&str> = (check.partial.iter().flatten())
+                .map(|part| part.area.as_str())
+                .collect();
+            let fall_back: Vec<&str> = check.fall_back.iter().map(|f| f.area.as_str()).collect();
+            if !partial.is_empty() || !fall_back.is_empty() {
                 let label = if open {
                     "Hide the areas"
                 } else {
                     "Show the areas"
                 };
                 toggle = widgets::text_button(ui, label).clicked();
-                if open {
-                    let names: Vec<&str> = check.fall_back.iter().map(|f| f.area.as_str()).collect();
-                    widgets::wrapped_mono(ui, &names.join(", "), theme::INK_MUTED);
+            }
+            if open {
+                for (heading, names) in [
+                    ("These areas show the new lighting in part:", &partial),
+                    ("These areas keep the game's own lighting:", &fall_back),
+                ] {
+                    if !names.is_empty() {
+                        widgets::muted(ui, heading);
+                        widgets::wrapped_mono(ui, &names.join(", "), theme::INK_MUTED);
+                    }
                 }
             }
         }
