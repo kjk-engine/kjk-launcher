@@ -1772,6 +1772,7 @@ mod tests {
     }
 
     /// A kjk that reads only the first manifest, or one that reads both.
+    #[cfg(unix)]
     #[derive(Clone, Copy, Debug, PartialEq)]
     enum Kjk {
         Old,
@@ -1833,6 +1834,7 @@ esac
             .collect()
     }
 
+    #[cfg(unix)]
     const REFRESHED: &str =
         r#"{"games":[{"game":"k1","status":"installed","path":"x","areas":4,"exact":4}]}"#;
 
